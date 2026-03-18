@@ -5,7 +5,7 @@ interface AuditData {
   security?: { firewallEnabled: boolean; stealthEnabled: boolean }
   listenPorts?: { port: string; process: string }[]
   devices?: { ip: string }[]
-  wifi?: { authMode: string }
+  wifi?: { authMode?: string }
   network?: { dns: string[] }
   score?: number
   verdict?: string

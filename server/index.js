@@ -16,6 +16,7 @@ const loggerModule = require('./logger')
 const ops = require('./ops')
 const vault = require('./vault')
 const watcher = require('./watcher')
+const monitor = require('./monitor')
 
 const PIN = process.env.PIN_CODE || '684861'
 const pinTokens = new Set()
@@ -55,6 +56,13 @@ function startAllBots() {
 }
 startAllBots()
 setTimeout(() => dashboard.startDashboard(), 8000)
+setTimeout(() => {
+  monitor.startMonitor(async (text) => {
+    if (experts.isRunning()) {
+      await experts.sendAsBot('xiaoai', text, null)
+    }
+  })
+}, 12000)
 
 const path = require('path')
 const app = express()
@@ -741,6 +749,66 @@ app.post('/api/bot/forward', async (req, res) => {
   try {
     await experts.forwardToGroup(text, from || 'win')
     res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// ════════════════════════════════════════
+// 群組監控 API — Win Bot 全量群組訊息
+// ════════════════════════════════════════
+app.get('/api/bot/groups', (_req, res) => {
+  res.json({ groups: experts.getGroupList() })
+})
+
+app.get('/api/bot/messages', (req, res) => {
+  const { groupId, limit } = req.query
+  if (!groupId) return res.status(400).json({ error: 'groupId required' })
+  res.json({ messages: experts.getGroupMessages(groupId, parseInt(limit) || 50) })
+})
+
+app.post('/api/bot/send', async (req, res) => {
+  const { groupId, text } = req.body
+  if (!groupId || !text) return res.status(400).json({ error: 'groupId and text required' })
+  try {
+    const result = await experts.sendToGroup(groupId, text)
+    res.json(result)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/bot/chat-any', async (req, res) => {
+  const { bot, message, user } = req.body
+  if (!bot || !message) return res.status(400).json({ error: 'bot and message required' })
+  try {
+    const result = await experts.panelChatAnyBot(bot, message, user || 'panel')
+    res.json(result)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// ════════════════════════════════════════
+// 安全監控 API — Security Monitor
+// ════════════════════════════════════════
+app.get('/api/monitor/status', (_req, res) => {
+  res.json(monitor.getMonitorStatus())
+})
+
+app.get('/api/monitor/alerts', (req, res) => {
+  const { limit, level } = req.query
+  if (level) return res.json({ alerts: monitor.getAlertsByLevel(level) })
+  res.json({ alerts: monitor.getAlerts(parseInt(limit) || 50) })
+})
+
+app.post('/api/monitor/ddos-shield', async (_req, res) => {
+  try {
+    // Auto-enable DO firewall when DDoS detected
+    const doToken = process.env.DO_API_TOKEN
+    if (!doToken) return res.json({ ok: false, error: 'DO API Token 未配置' })
+    const result = await doApi.enableFirewall?.() || { ok: false, error: 'DO 防火牆 API 未實現' }
+    if (result.ok) {
+      monitor.addAlert('INFO', 'system', 'DO 雲盾已啟用', '已透過 API 啟用 DigitalOcean 防火牆')
+      if (experts.isRunning()) {
+        await experts.sendAsBot('xiaoai', '🛡 [自動防禦] DO 雲盾已啟用 — DDoS 防護生效', null)
+      }
+    }
+    res.json(result)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 

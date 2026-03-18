@@ -83,6 +83,37 @@ function shouldSendToGroup(botKey, text) {
 const botChatQueue = []
 const MAX_CHAT_QUEUE = 100
 
+// ═══ Multi-Group Monitoring (Win Bot) ═══
+const groupMessages = {} // { [groupId]: { name, type, messages: [], lastActivity } }
+const MAX_GROUP_MESSAGES = 200
+const EXCLUDED_GROUP_IDS = new Set() // populated with main chatId
+
+function storeGroupMessage(chatInfo, msg) {
+  const gid = String(chatInfo.id)
+  if (!groupMessages[gid]) {
+    groupMessages[gid] = {
+      name: chatInfo.title || chatInfo.first_name || 'Unknown',
+      type: chatInfo.type,
+      messages: [],
+      lastActivity: null,
+    }
+  }
+  const entry = {
+    id: msg.message_id,
+    from: msg.from?.first_name || msg.from?.username || 'unknown',
+    fromId: msg.from?.id,
+    username: msg.from?.username || null,
+    text: msg.text || (msg.caption ? `[媒體] ${msg.caption}` : msg.sticker ? '[貼圖]' : msg.photo ? '[圖片]' : msg.document ? `[檔案] ${msg.document.file_name || ''}` : '[非文字訊息]'),
+    ts: new Date((msg.date || Date.now() / 1000) * 1000).toISOString(),
+    replyTo: msg.reply_to_message?.message_id || null,
+  }
+  groupMessages[gid].messages.push(entry)
+  groupMessages[gid].lastActivity = entry.ts
+  if (groupMessages[gid].messages.length > MAX_GROUP_MESSAGES) {
+    groupMessages[gid].messages.splice(0, groupMessages[gid].messages.length - MAX_GROUP_MESSAGES)
+  }
+}
+
 // Win Bot 交互狀態
 let updateTeammateCallback = null
 const winBotState = {
@@ -616,8 +647,22 @@ function startExperts(tokens, groupChatId, onUpdateTeammate) {
 
       b.on('message', (msg) => {
         if (msg.chat?.type === 'private') return
+        const gid = String(msg.chat.id)
+
+        // Win bot: monitor ALL groups, store messages per group
+        if (key === 'win') {
+          if (!chatId) chatId = msg.chat.id
+          EXCLUDED_GROUP_IDS.add(String(chatId))
+          // Store message for ALL groups (including main for archival)
+          storeGroupMessage(msg.chat, msg)
+          // Only run handleGroupMessage for main group
+          if (gid === String(chatId)) handleGroupMessage(key, msg)
+          return
+        }
+
+        // Other bots: only process main group
         if (!chatId) chatId = msg.chat.id
-        if (String(msg.chat.id) !== String(chatId)) return
+        if (gid !== String(chatId)) return
         handleGroupMessage(key, msg)
       })
 
@@ -765,8 +810,66 @@ async function forwardToGroup(text, fromBot) {
   return sendAsBot('xiaoai', `${prefix} ${text}`, null)
 }
 
+// ═══ Multi-Group API ═══
+function getGroupList() {
+  const mainId = chatId ? String(chatId) : null
+  return Object.entries(groupMessages).map(([gid, g]) => ({
+    id: gid,
+    name: g.name,
+    type: g.type,
+    messageCount: g.messages.length,
+    lastActivity: g.lastActivity,
+    isMain: gid === mainId,
+  })).sort((a, b) => (b.lastActivity || '').localeCompare(a.lastActivity || ''))
+}
+
+function getGroupMessages(groupId, limit = 50) {
+  const g = groupMessages[String(groupId)]
+  if (!g) return []
+  return g.messages.slice(-limit)
+}
+
+async function sendToGroup(groupId, text) {
+  if (!BOTS.win.bot || !text) return { ok: false, error: 'Win bot 未啟動或訊息為空' }
+  try {
+    await BOTS.win.bot.sendMessage(groupId, text)
+    // Store outbound message
+    storeGroupMessage({ id: groupId, title: groupMessages[groupId]?.name || 'Unknown', type: 'group' }, {
+      message_id: Date.now(),
+      from: { first_name: 'SD (面板)', username: 'panel', id: 0 },
+      text,
+      date: Date.now() / 1000,
+    })
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
+// Enhanced panelBotChat — support chatting with ANY bot
+async function panelChatAnyBot(botKey, message, fromUser) {
+  if (!BOTS[botKey]?.bot || !message) return { ok: false, error: `Bot ${botKey} 未啟動` }
+
+  const entry = { id: Date.now(), from: fromUser || 'panel', text: message, ts: new Date().toISOString(), direction: 'in', bot: botKey }
+  botChatQueue.push(entry)
+
+  // Forward to main group via the specified bot
+  try {
+    if (chatId && shouldSendToGroup(botKey, message)) {
+      await BOTS[botKey].bot.sendMessage(chatId, `📡 [面板→群] ${message}`)
+    }
+    const respEntry = { id: Date.now() + 1, from: BOTS[botKey].name, text: `✅ 已發送: ${message}`, ts: new Date().toISOString(), direction: 'out', bot: botKey }
+    botChatQueue.push(respEntry)
+    if (botChatQueue.length > MAX_CHAT_QUEUE) botChatQueue.splice(0, botChatQueue.length - MAX_CHAT_QUEUE)
+    return { ok: true, response: respEntry.text }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
 module.exports = {
   startExperts, stopExperts, isRunning, getBotInfo,
   sendAsBot, getLog, getChatId, formatMD, BOTS, getWinBotState,
   getBotChatQueue, panelBotChat, forwardToGroup,
+  getGroupList, getGroupMessages, sendToGroup, panelChatAnyBot,
 }

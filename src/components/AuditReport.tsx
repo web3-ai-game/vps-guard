@@ -56,7 +56,7 @@ export interface AuditData {
   hostname: string
   os: string
   network: Network
-  wifi: unknown
+  wifi?: { authMode?: string; ssid?: string; bssid?: string; signal?: string; channel?: string; phyMode?: string }
   security: Security
   listenPorts: ListenPort[]
   established: Connection[]
