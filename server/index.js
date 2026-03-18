@@ -17,6 +17,7 @@ const ops = require('./ops')
 const vault = require('./vault')
 const watcher = require('./watcher')
 const monitor = require('./monitor')
+const defender = require('./defender')
 
 const PIN = process.env.PIN_CODE || '684861'
 const pinTokens = new Set()
@@ -936,6 +937,38 @@ app.get('/api/vps/panorama', async (_req, res) => {
   }
 })
 
+// ════════════════════════════════════════
+// 自動防禦 API — /api/defender/*
+// ════════════════════════════════════════
+app.get('/api/defender/status', (_req, res) => {
+  res.json(defender.getDefenderStatus())
+})
+
+app.get('/api/defender/threats', (req, res) => {
+  const limit = parseInt(req.query.limit) || 50
+  res.json({ threats: defender.getThreatList(limit) })
+})
+
+app.post('/api/defender/ban', express.json(), (req, res) => {
+  const { ip, reason } = req.body || {}
+  if (!ip) return res.status(400).json({ error: 'ip required' })
+  res.json(defender.manualBan(ip, reason))
+})
+
+app.post('/api/defender/whitelist', express.json(), (req, res) => {
+  const { ip, action } = req.body || {}
+  if (!ip) return res.status(400).json({ error: 'ip required' })
+  if (action === 'remove') {
+    res.json({ ok: defender.removeWhitelistIP(ip) })
+  } else {
+    res.json({ ok: defender.addWhitelistIP(ip) })
+  }
+})
+
+app.get('/api/defender/report', (_req, res) => {
+  res.json({ report: defender.generateBattleReport() })
+})
+
 app.get('*', (_req, res) => {
   const index = path.join(__dirname, '..', 'dist', 'index.html')
   if (require('fs').existsSync(index)) res.sendFile(index)
@@ -947,6 +980,21 @@ const HOST = process.env.HOST || '0.0.0.0'
 server.listen(PORT, HOST, () => {
   console.log(`Blue Team backend running at http://${HOST}:${PORT}`)
 })
+
+// 啟動自動防禦系統
+setTimeout(() => {
+  try {
+    // 小愛播報函數 — defender 用來發 TG 消息
+    const tgSend = (msg) => {
+      if (experts.isRunning()) {
+        experts.sendAsBot('xiaoai', msg, null).catch(() => {})
+      }
+    }
+    defender.startDefender(tgSend)
+  } catch (e) {
+    console.error('[Defender] start error:', e.message)
+  }
+}, 5000)
 
 // 啟動 VPS 變動監控 (每 60 秒掃描)
 setTimeout(() => {
