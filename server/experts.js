@@ -1,30 +1,32 @@
 const TelegramBot = require('node-telegram-bot-api')
 const { analyzeSecurityData } = require('./ai')
+const logger = require('./logger')
+const personality = require('./personality')
 
 const BOTS = {
   chou: {
     name: 'Mr`Chou 助理',
     role: 'security',
-    desc: '安全防護專家 — 掃描、防火牆、威脅分析',
+    desc: '🛡 安全自動化 — 定時掃描、自動防護、異常播報、防護規則對齊',
     token: null,
     bot: null,
     triggers: ['/scan', '/protect', '/status', '/firewall', '/audit', '安全', '防護', '掃描', '防火牆', '威脅'],
   },
   onion: {
     name: 'Onion-Mcp',
-    role: 'analyst',
-    desc: 'AI 分析師 — 使用 Grok 分析安全態勢',
+    role: 'master',
+    desc: '🤖 AI 大師 — Grok 4 驅動、動態人格、聊天提問、安全諮詢',
     token: null,
     bot: null,
-    triggers: ['/analyze', '/ai', '/report', '分析', '報告', '風險', 'AI', '總結'],
+    triggers: ['/analyze', '/ai', '/report', '/ask', '/persona', '分析', '報告', '風險', 'AI', '總結'],
   },
   xiaoai: {
     name: '小愛同學',
-    role: 'companion',
-    desc: '陪伴助手 — 聊天、快捷指令、群互動',
+    role: 'coordinator',
+    desc: '📡 團隊中樞 — 全量記錄、加密轉存、Mac/Win 對齊、自動播報',
     token: null,
     bot: null,
-    triggers: ['/help', '/ping', '/joke', '你好', '哈哈', '笑話', '幫我', '怎麼'],
+    triggers: ['/help', '/ping', '/team', '/sync', '/logs', '/daily', '/exchange', '你好', '幫我'],
   },
 }
 
@@ -47,16 +49,30 @@ function getWinBotState() { return winBotState }
 function getLog() { return messageLog.slice(-50) }
 function getChatId() { return chatId }
 
-function addLog(botName, role, text, fromUser) {
-  messageLog.push({
+function addLog(botName, role, text, fromUser, msg) {
+  const entry = {
     id: Date.now(),
     bot: botName,
     role,
     text: text.slice(0, 500),
     fromUser: fromUser || null,
     ts: new Date().toISOString(),
-  })
+  }
+  messageLog.push(entry)
   if (messageLog.length > MAX_LOG) messageLog = messageLog.slice(-MAX_LOG)
+
+  // 全量加密寫入 /root/X/logs/
+  try {
+    logger.logMessage({
+      id: msg?.message_id || entry.id,
+      from: fromUser || botName,
+      fromBot: !fromUser,
+      botName: !fromUser ? botName : null,
+      text: text.slice(0, 2000),
+      chatId: msg?.chat?.id || chatId,
+      ts: entry.ts,
+    })
+  } catch {}
 }
 
 async function sendAsBot(botKey, text, parseMode) {
@@ -90,7 +106,7 @@ async function handleGroupMessage(botKey, msg) {
   const text = msg.text.trim()
   const user = msg.from?.first_name || 'User'
 
-  addLog(b.name, b.role, text, user)
+  addLog(b.name, b.role, text, user, msg)
 
   if (!chatId && msg.chat?.id) {
     chatId = msg.chat.id
@@ -123,8 +139,16 @@ async function handleGroupMessage(botKey, msg) {
   }
 
   if (botKey === 'onion') {
+    // /persona — 切換人格
+    if (lower.includes('/persona')) {
+      const p = personality.pickPersona()
+      await sendAsBot('onion', `${p.emoji} 人格切換為「${p.name}」\n\n『${p.greeting}』`, null)
+      return
+    }
+    // /analyze — 安全深度分析
     if (lower.includes('/analyze') || lower.includes('/ai') || lower.includes('分析')) {
-      await sendAsBot('onion', '🤖 Grok 分析中…請稍候 10 秒', null)
+      const p = personality.getCurrentPersona()
+      await sendAsBot('onion', `${p.emoji} 「${p.name}」正在分析中…`, null)
       try {
         const analysis = await analyzeSecurityData(
           { score: 0, verdict: 'ANALYZING', security: {}, findings: [], listenPorts: [], devices: [] },
@@ -137,11 +161,29 @@ async function handleGroupMessage(botKey, msg) {
       } catch (e) {
         await sendAsBot('onion', `❌ AI 分析出錯: ${e.message}`, null)
       }
+      return
     }
+    // /report — 態勢摘要
     if (lower.includes('/report') || lower.includes('報告')) {
       await sendAsBot('onion', formatMD('安全態勢摘要', [
         { heading: '📊 當前狀態', items: ['VPS 在線 ✅', '面板可訪問 ✅', '使用 /analyze 獲取 AI 深度分析'] },
       ]), 'Markdown')
+      return
+    }
+    // /ask 或直接聊天 — AI 大師動態人格回應
+    if (lower.startsWith('/ask') || lower.includes('問') || lower.includes('為什麼') || lower.includes('怎麼辦') || lower.includes('如何') || lower.includes('請問')) {
+      const question = text.replace(/^\/ask\s*/i, '').trim()
+      if (!question) {
+        await sendAsBot('onion', '🤖 請提問！例如: /ask 公共WiFi怎麼防護？', null)
+        return
+      }
+      try {
+        const { reply, persona, emoji } = await personality.chat(question, user)
+        await sendAsBot('onion', `${emoji} 「${persona}」\n\n${reply}`, null)
+      } catch (e) {
+        await sendAsBot('onion', `❌ AI 回應失敗: ${e.message}`, null)
+      }
+      return
     }
   }
 
@@ -270,6 +312,79 @@ async function handleGroupMessage(botKey, msg) {
       return
     }
 
+    // ── /logs 查看今日加密日誌摘要 ──
+    if (lower.includes('/logs')) {
+      try {
+        const today = logger.getTodayLogs()
+        const dates = logger.getLogDates()
+        await sendAsBot('xiaoai', [
+          '📝 *加密日誌系統*',
+          '',
+          `📅 今日記錄: ${today.length} 條訊息`,
+          `📁 歷史日誌: ${dates.length} 天`,
+          dates.length ? `📆 ${dates.slice(-5).join(', ')}` : '',
+          '',
+          `🔒 全部 AES-256-GCM 加密儲存`,
+          `📂 路徑: /root/X/logs/`,
+          '',
+          '💡 /daily — 產生今日摘要',
+          '💡 /exchange — 匯出交換數據',
+        ].filter(Boolean).join('\n'), 'Markdown')
+      } catch (e) {
+        await sendAsBot('xiaoai', `❌ 日誌查詢失敗: ${e.message}`, null)
+      }
+      return
+    }
+
+    // ── /daily 產生今日摘要 ──
+    if (lower.includes('/daily')) {
+      try {
+        const summary = logger.generateDailySummary()
+        if (!summary) {
+          await sendAsBot('xiaoai', '📊 今日尚無記錄', null)
+          return
+        }
+        await sendAsBot('xiaoai', [
+          '📊 *今日摘要報告*',
+          '',
+          `📅 ${summary.date}`,
+          `💬 總訊息: ${summary.totalMessages}`,
+          `👤 用戶訊息: ${summary.userMessages} · 🤖 Bot: ${summary.botMessages}`,
+          `👥 活躍用戶: ${summary.activeUsers.join(', ') || '無'}`,
+          `🤖 活躍 Bot: ${summary.activeBots.join(', ') || '無'}`,
+          '',
+          summary.highlights.length ? '*🔥 重點事件:*' : '',
+          ...summary.highlights.slice(0, 10).map(h => `  • ${h.from}: ${h.text}`),
+          '',
+          `🔒 摘要已加密儲存至 /root/X/summaries/`,
+        ].filter(Boolean).join('\n'), 'Markdown')
+      } catch (e) {
+        await sendAsBot('xiaoai', `❌ ${e.message}`, null)
+      }
+      return
+    }
+
+    // ── /exchange 匯出交換數據 ──
+    if (lower.includes('/exchange')) {
+      try {
+        const data = logger.getExchangeData()
+        await sendAsBot('xiaoai', [
+          '🔄 *交換數據已產生*',
+          '',
+          `💬 最近 ${data.logs.length} 條訊息`,
+          `📊 摘要: ${data.summary ? '✅ 已生成' : '❌ 未生成 (執行 /daily)'}`,
+          `⏱ ${data.exportedAt}`,
+          '',
+          '🔒 數據已加密儲存在 /root/X/',
+          '💡 Mac/Win 端可透過 SSH 讀取:',
+          '`scp root@167.71.13.130:/root/X/logs/* ./logs/`',
+        ].join('\n'), 'Markdown')
+      } catch (e) {
+        await sendAsBot('xiaoai', `❌ ${e.message}`, null)
+      }
+      return
+    }
+
     if (lower.includes('/fullscan')) {
       try {
         const tasks = require('./tasks')
@@ -298,19 +413,18 @@ async function handleGroupMessage(botKey, msg) {
     }
     if (lower.includes('/help') || lower.includes('幫我')) {
       await sendAsBot('xiaoai', [
-        '👋 我是小愛同學，藍隊全量安防助手！',
+        '👋 我是小愛同學，藍隊團隊中樞！',
         '',
-        '🛡 安全掃描：',
+        '🛡 安全掃描（Mr`Chou 助理）：',
+        '  /scan — 快速掃描',
+        '  /protect — 一鍵全防護',
+        '  /status — 系統狀態',
         '  /fullscan — 全量 11 項安全掃描',
         '  /autoscan 60 — 每 60 分鐘自動掃描',
-        '  /autoscan off — 關閉自動掃描',
         '',
-        '🔧 防護指令（Mr`Chou 助理）：',
-        '  /scan — 快速掃描',
-        '  /protect — 一鍵防護',
-        '  /status — 系統狀態',
-        '',
-        '🤖 AI 分析（Onion-Mcp）：',
+        '🤖 AI 大師（Onion-Mcp）：',
+        '  /ask <問題> — 向大師提問',
+        '  /persona — 切換人格 (有 6 種)',
         '  /analyze — Grok 4 深度分析',
         '  /report — 態勢摘要',
         '',
@@ -318,6 +432,11 @@ async function handleGroupMessage(botKey, msg) {
         '  /team — 雙端狀態對齊',
         '  /sync — 請求 Win Bot 回報',
         '  /wincheck — 查看 Win Bot 狀態',
+        '',
+        '📝 日誌系統：',
+        '  /logs — 加密日誌狀態',
+        '  /daily — 產生今日摘要',
+        '  /exchange — 匯出交換數據',
         '',
         '💬 其他：',
         '  /help — 顯示此幫助',
@@ -384,6 +503,9 @@ function parseWinBotReport(text) {
   return data
 }
 
+let broadcastTimer = null
+let dailySummaryTimer = null
+
 function startExperts(tokens, groupChatId, onUpdateTeammate) {
   if (groupChatId) chatId = groupChatId
   if (onUpdateTeammate) updateTeammateCallback = onUpdateTeammate
@@ -416,6 +538,46 @@ function startExperts(tokens, groupChatId, onUpdateTeammate) {
       console.error(`[Experts] Failed to start ${key}:`, e.message)
     }
   }
+
+  // 自動播報: 每 30 分鐘 Onion 用當前人格發一次狀態評論
+  if (broadcastTimer) clearInterval(broadcastTimer)
+  broadcastTimer = setInterval(async () => {
+    if (!chatId || !BOTS.onion.bot) return
+    try {
+      const context = {
+        uptime: process.uptime(),
+        winOnline: winBotState.lastSeen ? (Date.now() - winBotState.lastSeen < 120000) : false,
+        winData: winBotState.data,
+        todayLogs: logger.getTodayLogs().length,
+      }
+      const result = await personality.analyzeAndBroadcast(context)
+      if (result) {
+        await sendAsBot('onion', `${result.emoji} 「${result.persona}」定時播報\n\n${result.text}`, null)
+      }
+    } catch (e) {
+      console.error('[Broadcast] err:', e.message)
+    }
+  }, 30 * 60 * 1000)
+
+  // 每日 23:55 自動產生摘要
+  if (dailySummaryTimer) clearInterval(dailySummaryTimer)
+  dailySummaryTimer = setInterval(() => {
+    const now = new Date()
+    if (now.getHours() === 23 && now.getMinutes() === 55) {
+      try {
+        const summary = logger.generateDailySummary()
+        if (summary && chatId) {
+          sendAsBot('xiaoai', [
+            '📊 *今日自動摘要*',
+            `💬 ${summary.totalMessages} 條訊息 · 👤 ${summary.activeUsers.length} 人`,
+            `🔒 已加密儲存 /root/X/summaries/${summary.date}-summary.enc`,
+          ].join('\n'), 'Markdown').catch(() => {})
+        }
+      } catch {}
+    }
+  }, 60 * 1000)
+
+  console.log('[Experts] Auto-broadcast (30min) and daily summary (23:55) enabled')
 }
 
 function stopExperts() {

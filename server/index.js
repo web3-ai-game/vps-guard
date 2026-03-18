@@ -12,6 +12,7 @@ const doApi = require('./do')
 const experts = require('./experts')
 const tasks = require('./tasks')
 const dashboard = require('./dashboard')
+const loggerModule = require('./logger')
 
 const PIN = process.env.PIN_CODE || '684861'
 const pinTokens = new Set()
@@ -193,6 +194,35 @@ app.post('/api/tasks/auto', (req, res) => {
 
 app.get('/api/dashboard', (_req, res) => {
   res.json(dashboard.getDashStatus())
+})
+
+app.get('/api/logs', (_req, res) => {
+  const dates = loggerModule.getLogDates()
+  const today = loggerModule.getTodayLogs()
+  res.json({ dates, todayCount: today.length, recentMessages: today.slice(-30) })
+})
+
+app.get('/api/logs/:date', (req, res) => {
+  const logs = loggerModule.getLogsByDate(req.params.date)
+  res.json({ date: req.params.date, count: logs.length, messages: logs })
+})
+
+app.post('/api/logs/summary', (_req, res) => {
+  try {
+    const summary = loggerModule.generateDailySummary()
+    res.json({ ok: true, summary })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/logs/exchange/data', (_req, res) => {
+  try {
+    const data = loggerModule.getExchangeData()
+    res.json(data)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
 })
 
 app.post('/api/dashboard/update', async (_req, res) => {
