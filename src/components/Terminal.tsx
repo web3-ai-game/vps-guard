@@ -37,12 +37,12 @@ export default function Terminal({ lines, running, activeLabel }: TerminalProps)
           <span className="w-3 h-3 rounded-full bg-emerald-500/70" />
         </div>
         <span className="text-xs text-slate-400 ml-2 flex-1 truncate">
-          {activeLabel ?? 'BLUE TEAM TERMINAL'}
+          {activeLabel ?? '藍隊終端機'}
         </span>
         {running && (
           <span className="flex items-center gap-1 text-xs text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 blink" />
-            RUNNING
+            執行中
           </span>
         )}
       </div>
@@ -50,7 +50,7 @@ export default function Terminal({ lines, running, activeLabel }: TerminalProps)
       <div className="flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed space-y-0.5">
         {lines.length === 0 && (
           <div className="text-slate-600 text-center mt-8">
-            — select a tool from the radial menu —
+            — 請從工具面板選擇操作 —
           </div>
         )}
         {lines.map((line) => (

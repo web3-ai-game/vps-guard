@@ -165,7 +165,7 @@ async function handleGroupMessage(botKey, msg) {
         '👋 我是小愛同學，藍隊全量安防助手！',
         '',
         '🛡 安全掃描：',
-        '  /fullscan — 全量 7 項安全掃描',
+        '  /fullscan — 全量 11 項安全掃描',
         '  /autoscan 60 — 每 60 分鐘自動掃描',
         '  /autoscan off — 關閉自動掃描',
         '',

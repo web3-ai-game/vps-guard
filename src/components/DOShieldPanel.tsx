@@ -26,12 +26,12 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 const SHIELD_REGIONS = [
-  { slug: 'sgp1', name: '🇸🇬 Singapore' },
-  { slug: 'sfo3', name: '🇺🇸 San Francisco' },
-  { slug: 'lon1', name: '🇬🇧 London' },
-  { slug: 'fra1', name: '🇩🇪 Frankfurt' },
-  { slug: 'blr1', name: '🇮🇳 Bangalore' },
-  { slug: 'tor1', name: '🇨🇦 Toronto' },
+  { slug: 'sgp1', name: '🇸🇬 新加坡' },
+  { slug: 'sfo3', name: '🇺🇸 舊金山' },
+  { slug: 'lon1', name: '🇬🇧 倫敦' },
+  { slug: 'fra1', name: '🇩🇪 法蘭克福' },
+  { slug: 'blr1', name: '🇮🇳 班加羅爾' },
+  { slug: 'tor1', name: '🇨🇦 多倫多' },
 ]
 
 function DropletCard({ d, onDestroy, onRefresh }: { d: Droplet; onDestroy: (id: number) => void; onRefresh: (id: number) => void }) {
@@ -128,7 +128,7 @@ export default function DOShieldPanel() {
       setSizes(sizesR.sizes || [])
       setSSHKeys(keysR.keys || [])
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'API error')
+      setError(e instanceof Error ? e.message : 'API 錯誤')
     }
     setLoading(false)
   }, [])
@@ -164,7 +164,7 @@ export default function DOShieldPanel() {
       setDroplets(prev => [data.droplet, ...prev])
       setForm(f => ({ ...f, name: `bt-shield-${Date.now().toString(36)}` }))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Create failed')
+      setError(e instanceof Error ? e.message : '建立失敗')
     }
     setCreating(false)
   }
@@ -174,7 +174,7 @@ export default function DOShieldPanel() {
       await fetch(`/api/do/droplets/${id}`, { method: 'DELETE' })
       setDroplets(prev => prev.filter(d => d.id !== id))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : '刪除失敗')
     }
   }
 
@@ -191,7 +191,7 @@ export default function DOShieldPanel() {
             <div className="text-xs text-slate-400 font-mono truncate">{account.email}</div>
             <div className="flex items-center gap-2 mt-1">
               <span className={`text-[10px] font-mono ${account.status === 'active' ? 'text-emerald-400' : 'text-red-400'}`}>{account.status}</span>
-              <span className="text-[10px] text-slate-600">· 限額: {account.dropletLimit} droplets</span>
+              <span className="text-[10px] text-slate-600">· 限額: {account.dropletLimit} 台主機</span>
             </div>
           </div>
         )}

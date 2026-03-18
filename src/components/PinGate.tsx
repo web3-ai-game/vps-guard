@@ -94,7 +94,7 @@ export default function PinGate({ onUnlock }: PinGateProps) {
           </div>
           <div className="text-center">
             <h1 className="text-lg font-bold tracking-[6px] text-slate-300 uppercase">Blue Team</h1>
-            <p className="text-[10px] tracking-[4px] text-slate-600 uppercase mt-1">Security Dashboard</p>
+            <p className="text-[10px] tracking-[4px] text-slate-600 uppercase mt-1">安全控制台</p>
           </div>
         </div>
 
@@ -142,7 +142,7 @@ export default function PinGate({ onUnlock }: PinGateProps) {
         {/* Footer */}
         <div className="text-center text-[9px] text-slate-700 space-y-1 mt-8">
           <p>零信任訪問控制 — 所有連線需要驗證</p>
-          <p>Blue Team Security Dashboard v2</p>
+          <p>藍隊安全控制台 v2</p>
         </div>
       </div>
     </div>

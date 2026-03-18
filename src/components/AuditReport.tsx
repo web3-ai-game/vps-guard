@@ -104,38 +104,38 @@ function exportMarkdown(data: AuditData) {
   const lines: string[] = []
   const t = new Date(data.generatedAt).toLocaleString()
 
-  lines.push('# WiFi Zero Trust Audit Report')
-  lines.push(`> Generated: ${t}  |  Host: ${data.hostname}  |  OS: ${data.os}`)
+  lines.push('# WiFi 零信任稽查報告')
+  lines.push(`> 產生時間: ${t}  |  主機: ${data.hostname}  |  系統: ${data.os}`)
   lines.push('')
-  lines.push(`## Verdict: ${data.verdict}  (Security Score: ${data.score}/100)`)
+  lines.push(`## 評定: ${data.verdict}  (安全評分: ${data.score}/100)`)
   lines.push('')
-  lines.push('## Network Environment')
+  lines.push('## 網路環境')
   lines.push(`- **SSID**: ${data.wifi.ssid}`)
   lines.push(`- **BSSID**: ${data.wifi.bssid}`)
-  lines.push(`- **Auth**: ${data.wifi.authMode}  |  Channel: ${data.wifi.channel}  |  Signal: ${data.wifi.signal} dBm`)
-  lines.push(`- **IP**: ${data.network.ip}  |  Gateway: ${data.network.gateway}`)
+  lines.push(`- **認證**: ${data.wifi.authMode}  |  頻道: ${data.wifi.channel}  |  訊號: ${data.wifi.signal} dBm`)
+  lines.push(`- **IP**: ${data.network.ip}  |  閘道: ${data.network.gateway}`)
   lines.push(`- **DNS**: ${data.network.dns.join(', ') || 'N/A'}`)
   lines.push('')
-  lines.push('## Security Posture')
-  lines.push(`- Firewall: ${data.security.firewallEnabled ? '✅ Enabled' : '❌ Disabled'}`)
-  lines.push(`- Stealth Mode: ${data.security.stealthEnabled ? '✅ Enabled' : '❌ Disabled'}`)
-  lines.push(`- Listening Ports: ${data.listenPorts.length}`)
-  lines.push(`- Active Connections: ${data.established.length}`)
+  lines.push('## 安全態勢')
+  lines.push(`- 防火牆: ${data.security.firewallEnabled ? '✅ 已啟用' : '❌ 未啟用'}`)
+  lines.push(`- 隱身模式: ${data.security.stealthEnabled ? '✅ 已啟用' : '❌ 未啟用'}`)
+  lines.push(`- 監聽端口: ${data.listenPorts.length}`)
+  lines.push(`- 活躍連線: ${data.established.length}`)
   lines.push('')
-  lines.push(`## LAN Devices (${data.devices.length})`)
-  lines.push('| IP | MAC | Vendor |')
+  lines.push(`## 區域網設備 (${data.devices.length})`)
+  lines.push('| IP | MAC | 製造商 |')
   lines.push('|---|---|---|')
   for (const d of data.devices) lines.push(`| ${d.ip} | ${d.mac} | ${d.vendor || '—'} |`)
   lines.push('')
-  lines.push('## Findings')
+  lines.push('## 發現項目')
   for (const f of data.findings) {
     lines.push(`### [${f.level}] ${f.title}`)
     lines.push(f.detail)
-    lines.push(`> **Fix**: ${f.fix}`)
+    lines.push(`> **修復**: ${f.fix}`)
     lines.push('')
   }
   lines.push('---')
-  lines.push('*Zero Trust Principle: All WiFi networks are untrusted by default.*')
+  lines.push('*零信任原則：所有 WiFi 網路預設為不可信。*')
 
   const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
   const url = URL.createObjectURL(blob)
@@ -185,7 +185,7 @@ export default function AuditReport({ data, loading, onRun }: {
       {/* Report header */}
       <div className="shrink-0 flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
         <div>
-          <div className="text-xs font-mono text-slate-300">WiFi Zero Trust Audit</div>
+          <div className="text-xs font-mono text-slate-300">WiFi 零信任稽查報告</div>
           <div className="text-[10px] text-slate-600 mt-0.5">{t} · {data.hostname} · {data.os}</div>
         </div>
         <div className="flex items-center gap-2">
@@ -197,13 +197,13 @@ export default function AuditReport({ data, loading, onRun }: {
             onClick={() => exportMarkdown(data)}
             className="ml-2 px-2.5 py-1 rounded text-[9px] font-mono border border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-all"
           >
-            EXPORT .MD
+            匯出 .MD
           </button>
           <button
             onClick={onRun}
             className="px-2.5 py-1 rounded text-[9px] font-mono border border-slate-700 text-slate-500 hover:text-cyan-400 hover:border-cyan-800 transition-all"
           >
-            RESCAN
+            重新掃描
           </button>
         </div>
       </div>
@@ -229,10 +229,10 @@ export default function AuditReport({ data, loading, onRun }: {
           <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-3 py-2.5 space-y-0.5">
             <KV label="SSID" value={data.wifi.ssid} highlight="text-amber-300" />
             <KV label="BSSID" value={data.wifi.bssid} />
-            <KV label="Auth" value={data.wifi.authMode || '—'} highlight={data.wifi.authMode.toLowerCase().includes('wpa3') ? 'text-emerald-400' : data.wifi.authMode.toLowerCase().includes('wpa2') ? 'text-yellow-400' : 'text-red-400'} />
-            <KV label="Channel" value={data.wifi.channel} />
-            <KV label="Signal" value={`${data.wifi.signal} dBm`} />
-            <KV label="PHY Mode" value={data.wifi.phyMode} />
+            <KV label="認證方式" value={data.wifi.authMode || '—'} highlight={data.wifi.authMode.toLowerCase().includes('wpa3') ? 'text-emerald-400' : data.wifi.authMode.toLowerCase().includes('wpa2') ? 'text-yellow-400' : 'text-red-400'} />
+            <KV label="頻道" value={data.wifi.channel} />
+            <KV label="訊號" value={`${data.wifi.signal} dBm`} />
+            <KV label="PHY 模式" value={data.wifi.phyMode} />
           </div>
         </Section>
 
@@ -240,8 +240,8 @@ export default function AuditReport({ data, loading, onRun }: {
         <Section title="網路配置">
           <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-3 py-2.5 space-y-0.5">
             <KV label="IP" value={data.network.ip} />
-            <KV label="Netmask" value={data.network.mask} />
-            <KV label="Gateway" value={data.network.gateway} />
+            <KV label="子網遮罩" value={data.network.mask} />
+            <KV label="閘道" value={data.network.gateway} />
             <KV label="MAC" value={data.network.mac} />
             <KV label="DNS" value={data.network.dns.join(', ') || 'N/A'} highlight={data.network.dns.some(d => !d.startsWith('192.168') && !d.startsWith('10.')) ? 'text-yellow-400' : 'text-slate-300'} />
           </div>
@@ -250,10 +250,10 @@ export default function AuditReport({ data, loading, onRun }: {
         {/* Security posture */}
         <Section title="本機安全態勢">
           <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-3 py-2.5 space-y-0.5">
-            <KV label="Firewall" value={data.security.firewallEnabled ? '✅ Enabled' : '❌ Disabled'} highlight={data.security.firewallEnabled ? 'text-emerald-400' : 'text-red-400'} mono={false} />
-            <KV label="Stealth Mode" value={data.security.stealthEnabled ? '✅ Enabled' : '❌ Disabled'} highlight={data.security.stealthEnabled ? 'text-emerald-400' : 'text-orange-400'} mono={false} />
-            <KV label="Listen Ports" value={String(data.listenPorts.length)} highlight={data.listenPorts.length > 0 ? 'text-orange-400' : 'text-emerald-400'} />
-            <KV label="Connections" value={String(data.established.length)} highlight={data.established.length > 20 ? 'text-yellow-400' : 'text-slate-300'} />
+            <KV label="防火牆" value={data.security.firewallEnabled ? '✅ 已啟用' : '❌ 未啟用'} highlight={data.security.firewallEnabled ? 'text-emerald-400' : 'text-red-400'} mono={false} />
+            <KV label="隱身模式" value={data.security.stealthEnabled ? '✅ 已啟用' : '❌ 未啟用'} highlight={data.security.stealthEnabled ? 'text-emerald-400' : 'text-orange-400'} mono={false} />
+            <KV label="監聽端口" value={String(data.listenPorts.length)} highlight={data.listenPorts.length > 0 ? 'text-orange-400' : 'text-emerald-400'} />
+            <KV label="連線數" value={String(data.established.length)} highlight={data.established.length > 20 ? 'text-yellow-400' : 'text-slate-300'} />
           </div>
           {data.listenPorts.length > 0 && (
             <div className="mt-2 rounded-xl border border-slate-800 bg-black/30 px-3 py-2">
@@ -280,7 +280,7 @@ export default function AuditReport({ data, loading, onRun }: {
                   <tr className="border-b border-slate-800">
                     <th className="text-left text-slate-600 px-3 py-1.5 font-normal">IP</th>
                     <th className="text-left text-slate-600 px-3 py-1.5 font-normal">MAC</th>
-                    <th className="text-left text-slate-600 px-3 py-1.5 font-normal">Vendor</th>
+                    <th className="text-left text-slate-600 px-3 py-1.5 font-normal">製造商</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -315,7 +315,7 @@ export default function AuditReport({ data, loading, onRun }: {
         </Section>
 
         <div className="text-[9px] text-slate-700 text-center pb-4 font-mono">
-          ZERO TRUST — All WiFi networks are untrusted by default
+零信任 — 所有 WiFi 網路預設為不可信
         </div>
       </div>
     </div>

@@ -245,7 +245,7 @@ export default function App() {
         className="shrink-0 flex items-center px-5 h-7 border-t border-slate-900/60 text-[9px] font-mono text-slate-700"
         style={{ background: 'rgba(2,6,18,0.9)' }}
       >
-        <span>BLUE TEAM SECURITY DASHBOARD</span>
+        <span>藍隊安全防護控制台</span>
         <span className="mx-3">·</span>
         <span>零信任模式 — 預設不可信</span>
         <div className="flex-1" />

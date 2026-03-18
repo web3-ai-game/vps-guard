@@ -51,7 +51,7 @@ export default function AIIntelPanel({ auditData, botRunning }: Props) {
       if (data.error) throw new Error(data.error)
       setAnalysis(data.analysis)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
+      setError(e instanceof Error ? e.message : '未知錯誤')
     } finally {
       setLoading(false)
     }
@@ -118,7 +118,7 @@ export default function AIIntelPanel({ auditData, botRunning }: Props) {
         </div>
         <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-3 py-2.5">
           <div className="text-[10px] text-slate-600 mb-1">AI 模型</div>
-          <div className="text-sm font-mono text-purple-400">grok-3-latest</div>
+          <div className="text-sm font-mono text-purple-400">grok-4-0709</div>
         </div>
       </div>
 
@@ -149,7 +149,7 @@ export default function AIIntelPanel({ auditData, botRunning }: Props) {
         {analysis && !loading && (
           <div className="h-full overflow-y-auto p-5">
             <div className="text-[10px] text-slate-600 font-mono mb-4 pb-3 border-b border-slate-800">
-              分析時間: {new Date().toLocaleString()} · 模型: grok-3-latest
+              分析時間: {new Date().toLocaleString()} · 模型: grok-4-0709
             </div>
             <div className="space-y-0.5">
               {renderAnalysis(analysis)}

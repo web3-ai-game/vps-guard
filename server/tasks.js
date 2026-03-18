@@ -279,7 +279,7 @@ async function runAndReport(taskId) {
 }
 
 async function runFullScanAndReport() {
-  await sendAsBot('xiaoai', '🛡 *藍隊全量掃描啟動*\n\n正在執行 7 項安全檢測…請稍候', 'Markdown')
+  await sendAsBot('xiaoai', '🛡 *藍隊全量掃描啟動*\n\n正在執行 11 項安全檢測…請稍候', 'Markdown')
 
   const results = await runAllTasks()
   const levelEmoji = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🟢' }
