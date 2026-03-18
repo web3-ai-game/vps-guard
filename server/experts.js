@@ -867,9 +867,48 @@ async function panelChatAnyBot(botKey, message, fromUser) {
   }
 }
 
+// ═══ Unified Feed — 全量訊息流 ═══
+function getAllFeed(limit = 80) {
+  const mainId = chatId ? String(chatId) : null
+  const all = []
+  const seenTexts = new Set() // dedup for main group
+
+  for (const [gid, g] of Object.entries(groupMessages)) {
+    const isMain = gid === mainId
+    for (const m of g.messages) {
+      // OECE 主群: 去重 + 過濾 bot 自動消息, 只保留用戶手工內容
+      if (isMain) {
+        const key = (m.text || '').slice(0, 60)
+        if (seenTexts.has(key)) continue
+        seenTexts.add(key)
+        // Skip bot auto broadcasts, heartbeats, watcher noise
+        if (m.text?.includes('[VPS 變動偵測]')) continue
+        if (m.text?.includes('[INTERNAL]') || m.text?.includes('[HEARTBEAT]')) continue
+        if (m.text?.includes('定時播報') && m.from !== 'SD (面板)') continue
+      }
+      all.push({
+        ...m,
+        groupId: gid,
+        groupName: g.name,
+        isMain,
+      })
+    }
+  }
+
+  // Sort by timestamp desc, return latest
+  all.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''))
+  return all.slice(0, limit)
+}
+
+// ═══ Mac Bot — 指派 Chou 給 Mac 面板監控 ═══
+async function sendAsMacBot(text) {
+  return sendAsBot('chou', text, null)
+}
+
 module.exports = {
   startExperts, stopExperts, isRunning, getBotInfo,
   sendAsBot, getLog, getChatId, formatMD, BOTS, getWinBotState,
   getBotChatQueue, panelBotChat, forwardToGroup,
   getGroupList, getGroupMessages, sendToGroup, panelChatAnyBot,
+  getAllFeed, sendAsMacBot,
 }

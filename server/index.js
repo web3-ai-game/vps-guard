@@ -755,6 +755,24 @@ app.post('/api/bot/forward', async (req, res) => {
 // ════════════════════════════════════════
 // 群組監控 API — Win Bot 全量群組訊息
 // ════════════════════════════════════════
+app.get('/api/bot/feed', (req, res) => {
+  const limit = parseInt(req.query.limit) || 80
+  const feed = experts.getAllFeed(limit)
+  const groups = experts.getGroupList()
+  const monStatus = monitor.getMonitorStatus()
+  const recentAlerts = monitor.getAlerts(5)
+  res.json({ feed, groups, monitor: monStatus, alerts: recentAlerts })
+})
+
+app.post('/api/bot/mac-send', async (req, res) => {
+  const { text } = req.body
+  if (!text) return res.status(400).json({ error: 'text required' })
+  try {
+    await experts.sendAsMacBot(text)
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 app.get('/api/bot/groups', (_req, res) => {
   res.json({ groups: experts.getGroupList() })
 })
