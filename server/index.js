@@ -979,6 +979,17 @@ app.post('/api/defender/broadcast', (_req, res) => {
   }
 })
 
+app.post('/api/defender/broadcast-custom', (req, res) => {
+  const { text } = req.body || {}
+  if (!text) return res.status(400).json({ ok: false, error: 'missing text' })
+  if (experts.isRunning()) {
+    experts.sendAsBot('xiaoai', text, null).catch(() => {})
+    res.json({ ok: true, msg: '小愛已播報自訂訊息' })
+  } else {
+    res.json({ ok: false, msg: 'Experts not running' })
+  }
+})
+
 app.get('*', (_req, res) => {
   const index = path.join(__dirname, '..', 'dist', 'index.html')
   if (require('fs').existsSync(index)) res.sendFile(index)
