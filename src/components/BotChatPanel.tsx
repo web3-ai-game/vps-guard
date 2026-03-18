@@ -18,7 +18,20 @@ interface VPano {
   monitor: MonitorStatus; alerts: Alert[]; bots: BotInfo[]; groups: Group[]
 }
 
-type View = 'feed' | 'group' | 'bots' | 'alerts' | 'vps'
+
+interface DefenderStatus {
+  running: boolean
+  stats: { totalBlocked: number; totalScans: number; totalBrute: number; bannedToday: number; sessionStart: string }
+  totalThreats: number; activeThreats24h: number; totalBanned: number; whitelist: number
+  topAttackers: ThreatEntry[]
+}
+interface ThreatEntry {
+  ip: string; count: number; firstSeen: string; lastSeen: string
+  types: string[]; usernames: string[]; banned: boolean; banTime: string | null
+  details: string[]
+}
+
+type View = 'feed' | 'group' | 'bots' | 'alerts' | 'vps' | 'battle'
 const fmtBytes = (b: number) => b < 1048576 ? (b/1024).toFixed(0)+'K' : b < 1073741824 ? (b/1048576).toFixed(1)+'M' : (b/1073741824).toFixed(1)+'G'
 
 export default function BotChatPanel() {
@@ -37,6 +50,9 @@ export default function BotChatPanel() {
   const [botChatInput, setBotChatInput] = useState('')
   const [replyTarget, setReplyTarget] = useState<FeedMessage | null>(null)
   const msgEndRef = useRef<HTMLDivElement>(null)
+  const [defStatus, setDefStatus] = useState<DefenderStatus | null>(null)
+  const [threatList, setThreatList] = useState<ThreatEntry[]>([])
+  const [battleFilter, setBattleFilter] = useState<'all' | 'banned' | 'active'>('all')
 
   const fetchPano = useCallback(async () => {
     try {
@@ -63,6 +79,15 @@ export default function BotChatPanel() {
     try { const r = await fetch('/api/monitor/alerts?limit=30'); const d = await r.json(); setAlerts(d.alerts || []) } catch {}
   }, [])
 
+  const fetchDefender = useCallback(async () => {
+    try {
+      const [sr, tr] = await Promise.all([fetch('/api/defender/status'), fetch('/api/defender/threats?limit=80')])
+      const sd: DefenderStatus = await sr.json()
+      const td = await tr.json()
+      setDefStatus(sd); setThreatList(td.threats || [])
+    } catch {}
+  }, [])
+
   useEffect(() => {
     fetchPano(); fetchFeed()
     const t1 = setInterval(fetchPano, 15000)
@@ -75,6 +100,9 @@ export default function BotChatPanel() {
   }, [view, selectedGroup, fetchGroupMsgs])
 
   useEffect(() => { if (view === 'alerts') fetchAlertsFull() }, [view, fetchAlertsFull])
+  useEffect(() => {
+    if (view === 'battle') { fetchDefender(); const t = setInterval(fetchDefender, 8000); return () => clearInterval(t) }
+  }, [view, fetchDefender])
   useEffect(() => { msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [feed, groupMessages])
 
   const sendToGroup = async (gid: string) => {
@@ -106,6 +134,15 @@ export default function BotChatPanel() {
     setSending(false)
   }
 
+  const broadcastReport = async () => {
+    try { await fetch('/api/defender/broadcast', { method: 'POST' }) } catch {}
+  }
+
+  const manualBan = async (ip: string) => {
+    if (!confirm('\u5c01\u7981 ' + ip + ' ?')) return
+    try { await fetch('/api/defender/ban', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip, reason: 'Manual ban from panel' }) }); fetchDefender() } catch {}
+  }
+
   const AC: Record<string, string> = {
     CRITICAL: 'border-red-800 bg-red-950/50 text-red-400',
     HIGH: 'border-orange-800 bg-orange-950/40 text-orange-400',
@@ -119,6 +156,7 @@ export default function BotChatPanel() {
     { id: 'bots', icon: '\ud83e\udd16', label: 'Bot\u4ea4\u4e92' },
     { id: 'alerts', icon: '\ud83d\udea8', label: '\u5b89\u5168\u8b66\u5831' },
     { id: 'vps', icon: '\ud83d\udee1', label: 'VPS\u7a3d\u67e5' },
+    { id: 'battle', icon: '\u2694\ufe0f', label: '\u653b\u9632\u6230\u6cc1' },
   ]
 
   const s = pano?.system
@@ -415,6 +453,149 @@ export default function BotChatPanel() {
                   <p className="text-[8px] opacity-70 whitespace-pre-wrap">{a.detail}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+
+        {/* BATTLE VIEW */}
+        {view === 'battle' && (
+          <div className="flex-1 flex flex-col overflow-hidden gap-2">
+            {/* Battle stats header */}
+            {defStatus && (
+              <div className="shrink-0 space-y-2">
+                <div className="grid grid-cols-7 gap-1.5">
+                  <div className="col-span-2 bg-gradient-to-br from-red-950/60 to-slate-900/80 border border-red-800/40 rounded-xl px-3 py-2 text-center">
+                    <div className="text-[7px] text-red-400/70">\u5df2\u6bbc\u6ec5\u6575\u65b9</div>
+                    <div className="text-xl font-mono font-black text-red-400">{defStatus.totalBanned}</div>
+                    <div className="text-[7px] text-slate-600">\u4eca\u65e5 +{defStatus.stats.bannedToday}</div>
+                  </div>
+                  <Stat label="\u5075\u6e2c\u6b21\u6578" val={String(defStatus.stats.totalScans)} c="text-amber-400" />
+                  <Stat label="\u653b\u64ca\u651d\u622a" val={String(defStatus.stats.totalBlocked)} c="text-red-400" />
+                  <Stat label="24h\u5a01\u8105" val={String(defStatus.activeThreats24h)} c={defStatus.activeThreats24h > 10 ? 'text-orange-400' : 'text-slate-300'} />
+                  <Stat label="\u5a01\u8105\u7e3d\u6578" val={String(defStatus.totalThreats)} />
+                  <Stat label="\u767d\u540d\u55ae" val={String(defStatus.whitelist)} c="text-emerald-400" />
+                </div>
+                {/* Attack type breakdown bar */}
+                <div className="flex gap-1 items-center px-1">
+                  <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden flex">
+                    {(() => {
+                      const types: Record<string, number> = {}
+                      for (const t of threatList) for (const tp of t.types) types[tp] = (types[tp] || 0) + t.count
+                      const total = Object.values(types).reduce((a, b) => a + b, 0) || 1
+                      const colors: Record<string, string> = { ssh_brute: 'bg-red-500', web_scan: 'bg-orange-500', auto_tool: 'bg-purple-500', dir_brute: 'bg-yellow-500', rate_limit: 'bg-cyan-500', ssh_spray: 'bg-pink-500', manual: 'bg-slate-500' }
+                      return Object.entries(types).sort((a,b) => b[1]-a[1]).map(([tp, cnt]) => (
+                        <div key={tp} className={`${colors[tp] || 'bg-slate-600'} h-full`} style={{ width: `${(cnt/total)*100}%` }} title={`${tp}: ${cnt}`} />
+                      ))
+                    })()}
+                  </div>
+                  <div className="flex gap-1.5 text-[6px] shrink-0">
+                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-red-500" />SSH</span>
+                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-orange-500" />Web</span>
+                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-purple-500" />Tool</span>
+                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />Dir</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Threat table + live log */}
+            <div className="flex-1 flex gap-2 min-h-0 overflow-hidden">
+              {/* Threat table */}
+              <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/20 overflow-hidden">
+                <div className="shrink-0 px-3 py-1.5 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
+                  <span className="text-[9px] font-medium text-slate-400">\u2694\ufe0f \u5a01\u8105\u6e05\u55ae</span>
+                  <div className="flex gap-1">
+                    {(['all','banned','active'] as const).map(f => (
+                      <button key={f} onClick={() => setBattleFilter(f)}
+                        className={`text-[7px] px-1.5 py-0.5 rounded border ${battleFilter === f ? 'border-cyan-800 bg-cyan-950/40 text-cyan-400' : 'border-transparent text-slate-600 hover:text-slate-400'}`}
+                      >{f === 'all' ? '\u5168\u90e8' : f === 'banned' ? '\u5df2\u5c01\u7981' : '\u6d3b\u8e8d'}</button>
+                    ))}
+                  </div>
+                  <div className="flex-1" />
+                  <button onClick={broadcastReport} className="text-[7px] px-1.5 py-0.5 border border-amber-800/50 rounded bg-amber-950/30 text-amber-400 hover:bg-amber-950/50">\ud83d\udce3 \u5c0f\u611b\u64ad\u5831</button>
+                  <button onClick={fetchDefender} className="text-[7px] px-1.5 py-0.5 border border-slate-700 rounded text-slate-600 hover:text-cyan-400">\ud83d\udd04</button>
+                </div>
+                <div className="shrink-0 grid grid-cols-12 gap-1 px-3 py-1 border-b border-slate-800/50 text-[6px] text-slate-600 font-mono">
+                  <span className="col-span-3">IP</span>
+                  <span className="col-span-1 text-right">\u6b21\u6578</span>
+                  <span className="col-span-2">\u985e\u578b</span>
+                  <span className="col-span-2">\u7528\u6236\u540d</span>
+                  <span className="col-span-2">\u6700\u5f8c\u898b</span>
+                  <span className="col-span-1">\u72c0\u614b</span>
+                  <span className="col-span-1">\u64cd\u4f5c</span>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  {threatList
+                    .filter(t => battleFilter === 'all' ? true : battleFilter === 'banned' ? t.banned : !t.banned)
+                    .map((t, i) => (
+                    <div key={t.ip} className={`grid grid-cols-12 gap-1 px-3 py-1 text-[7px] font-mono border-b border-slate-800/20 hover:bg-slate-800/30 ${i % 2 === 0 ? 'bg-slate-900/10' : ''}`}>
+                      <span className="col-span-3 text-slate-300 truncate" title={t.ip}>{t.ip}</span>
+                      <span className={`col-span-1 text-right font-bold ${t.count > 100 ? 'text-red-400' : t.count > 20 ? 'text-orange-400' : 'text-slate-400'}`}>{t.count}</span>
+                      <span className="col-span-2 flex gap-0.5 flex-wrap">
+                        {t.types.map(tp => (
+                          <span key={tp} className={`px-0.5 rounded ${tp === 'ssh_brute' ? 'bg-red-950/50 text-red-400' : tp === 'web_scan' ? 'bg-orange-950/50 text-orange-400' : tp === 'auto_tool' ? 'bg-purple-950/50 text-purple-400' : 'bg-slate-800 text-slate-500'}`}>{tp.replace('_',''). slice(0,6)}</span>
+                        ))}
+                      </span>
+                      <span className="col-span-2 text-slate-500 truncate">{t.usernames?.slice(-3).join(',') || '-'}</span>
+                      <span className="col-span-2 text-slate-600">{t.lastSeen ? new Date(t.lastSeen).toLocaleTimeString('zh-TW') : '-'}</span>
+                      <span className="col-span-1">{t.banned
+                        ? <span className="text-red-400">\ud83d\udeab</span>
+                        : <span className="text-yellow-400">\u26a0\ufe0f</span>
+                      }</span>
+                      <span className="col-span-1">
+                        {!t.banned && <button onClick={() => manualBan(t.ip)} className="text-[6px] px-1 py-0.5 rounded bg-red-950/40 border border-red-800/40 text-red-400 hover:bg-red-900/40">BAN</button>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Right column — live attack feed + heatmap */}
+              <div className="w-56 shrink-0 flex flex-col gap-2 overflow-hidden">
+                {/* Live attack feed */}
+                <div className="flex-1 flex flex-col border border-red-900/40 rounded-xl bg-red-950/10 overflow-hidden min-h-0">
+                  <div className="shrink-0 px-2 py-1.5 border-b border-red-900/30 text-[8px] text-red-400 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> \u5be6\u6642\u653b\u64ca\u6d41
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-1 space-y-0.5 font-mono text-[6px]">
+                    {threatList.filter(t => {
+                      const ago = Date.now() - new Date(t.lastSeen).getTime()
+                      return ago < 3600000
+                    }).slice(0, 30).map((t, i) => (
+                      <div key={`live-${t.ip}-${i}`} className={`px-1.5 py-0.5 rounded ${t.banned ? 'bg-red-950/30 text-red-400/80' : 'bg-amber-950/20 text-amber-400/80'}`}>
+                        <span className={t.banned ? 'line-through' : ''}>{t.ip}</span>
+                        <span className="text-slate-600 ml-1">{t.types[0]}</span>
+                        <span className="float-right">{t.banned ? '\u2620\ufe0f' : '\u26a0\ufe0f'} {t.count}</span>
+                      </div>
+                    ))}
+                    {threatList.filter(t => Date.now() - new Date(t.lastSeen).getTime() < 3600000).length === 0 && (
+                      <div className="text-center py-4 text-slate-600 text-[7px]">\u66ab\u7121\u6d3b\u8e8d\u653b\u64ca<br/>\u9632\u79a6\u76fe\u724c\u5df2\u555f\u52d5</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Top attackers mini chart */}
+                <div className="h-36 shrink-0 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden">
+                  <div className="px-2 py-1.5 border-b border-slate-800 text-[8px] text-slate-500 font-medium">\ud83c\udfc6 \u653b\u64ca\u6392\u884c\u699c</div>
+                  <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
+                    {defStatus?.topAttackers?.slice(0, 8).map((t, i) => {
+                      const maxCount = defStatus.topAttackers[0]?.count || 1
+                      const pct = Math.round((t.count / maxCount) * 100)
+                      return (
+                        <div key={t.ip} className="flex items-center gap-1">
+                          <span className={`text-[7px] w-3 text-right font-bold ${i < 3 ? 'text-red-400' : 'text-slate-500'}`}>{i+1}</span>
+                          <div className="flex-1 relative h-3 bg-slate-800/50 rounded overflow-hidden">
+                            <div className={`absolute inset-y-0 left-0 rounded ${i === 0 ? 'bg-red-600/60' : i < 3 ? 'bg-orange-600/40' : 'bg-slate-700/40'}`} style={{ width: `${pct}%` }} />
+                            <span className="absolute inset-0 flex items-center px-1 text-[6px] text-slate-300 font-mono truncate">{t.ip}</span>
+                          </div>
+                          <span className="text-[6px] w-8 text-right font-mono text-slate-500">{t.count > 999 ? (t.count/1000).toFixed(1)+'k' : t.count}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
