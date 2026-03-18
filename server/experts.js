@@ -31,12 +31,12 @@ const BOTS = {
   },
 
   win: {
-    name: 'Win-Guard',
-    role: 'defender',
-    desc: '🪟 Windows 防護衛士 — Win 端安全狀態回報、跨平台對齊',
+    name: 'SD',
+    role: 'ops',
+    desc: '🪟 Win 端靜默操作 — 只回應指令，不主動播報',
     token: null,
     bot: null,
-    triggers: ['/winstatus', '/windef', '/winreport', '防護', 'Win', 'win'],
+    triggers: ['/sd', '/winstatus', '/winops'],
   },
 }
 
@@ -233,64 +233,47 @@ async function handleGroupMessage(botKey, msg) {
   }
 
   // ── Win Bot 訊息自動偵測 (所有 bot 都監聽，但只有 xiaoai 回應) ──
-    // ── Win-Guard Bot 指令處理 ──
+    // ═══ [WIN] SD Bot — 靜默操作，只回應指令 ═══
   if (botKey === 'win') {
-    if (text === '!win-report' || lower.includes('/winstatus') || lower.includes('/winreport')) {
+    // SD only responds to direct commands, never broadcasts
+    if (lower === '/sd' || lower === '/winstatus') {
       try {
-        const http = require('http');
+        const http = require('http')
         const resp = await new Promise((resolve, reject) => {
           const req = http.get('http://127.0.0.1:3001/api/teammates', (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => resolve(JSON.parse(data)));
-          });
-          req.on('error', reject);
-          req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
-        });
-        const wd = resp.win?.data || {};
-        const online = resp.win?.online || false;
-        const fw = wd.firewall ? '✅' : '❌';
-        const def = wd.defender ? '✅' : '❌';
-        const host = wd.hostname || 'Unknown';
-        const ports = wd.openPorts !== undefined ? wd.openPorts : '?';
-        const conns = wd.connections !== undefined ? wd.connections : '?';
-        const susp = wd.suspicious && wd.suspicious.length > 0 ? wd.suspicious.join(', ') : '無';
+            let data = ''; res.on('data', chunk => data += chunk)
+            res.on('end', () => resolve(JSON.parse(data)))
+          })
+          req.on('error', reject)
+          req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')) })
+        })
+        const wd = resp.win?.data || {}
+        const online = resp.win?.online || false
         await sendAsBot('win', [
-          '🪟 [WIN-STATUS]',
-          (online ? '🟢' : '🔴') + ' 狀態: ' + (online ? '在線' : '離線'),
-          '防火牆: ' + fw,
-          'Defender: ' + def,
-          '主機名: ' + host,
-          '端口: ' + ports,
-          '連線: ' + conns,
-          '可疑項目: ' + susp,
-          '',
-          '⏱ ' + (wd.ts || new Date().toISOString()),
-          '✅ 7-Layer Zero Trust Active',
-        ].join('\n'), null);
-        winBotState.lastSeen = Date.now();
-        winBotState.lastReport = new Date().toISOString();
-        winBotState.botName = 'Win-Guard';
-        winBotState.data = { firewall: wd.firewall, defender: wd.defender, hostname: host, openPorts: ports, connections: conns };
+          '[SD] Win Status',
+          (online ? 'Online' : 'Offline'),
+          'FW: ' + (wd.firewall ? 'ON' : 'OFF'),
+          'Def: ' + (wd.defender ? 'ON' : 'OFF'),
+          'Host: ' + (wd.hostname || '?'),
+          'Ports: ' + (wd.openPorts || '?'),
+          'Conns: ' + (wd.connections || '?'),
+        ].join(' | '), null)
       } catch (e) {
-        await sendAsBot('win', '🪟 [WIN-STATUS]\n⚠ 無法獲取即時資料: ' + e.message, null);
+        await sendAsBot('win', '[SD] Error: ' + e.message, null)
       }
-      return;
+      return
     }
-    if (lower.includes('/windef')) {
+    if (lower === '/winops') {
       await sendAsBot('win', [
-        '🛡 Win-Guard 防護配置',
-        '',
-        '1. Network: Firewall default BLOCK',
-        '2. Host: Defender + ClamWin + Sysmon',
-        '3. App: SMBv1/LLMNR/WPAD/WDigest OFF',
-        '4. Monitor: Watchdog 5min, FIM 15min',
-        '5. Response: Fail2Ban auto-block',
-        '6. Threat: Suspicious process detection',
-        '7. CFA: Controlled Folder Access ON',
-      ].join('\n'), null);
-      return;
+        '[SD] Commands:',
+        '/sd — Win status (one-line)',
+        '/winstatus — same',
+        '/winops — this help',
+      ].join('\n'), null)
+      return
     }
+    // SD ignores all other messages — no spam
+    return
   }
 
   if (botKey === 'xiaoai') {
