@@ -21,18 +21,209 @@ const THREAT_DB_PATH = path.join(__dirname, '..', 'data', 'threats.json')
 const WHITELIST_PATH = path.join(__dirname, '..', 'data', 'whitelist.json')
 const BAN_THRESHOLD = 3
 const REPORT_INTERVAL = 30 * 60 * 1000 // 30min battle report
+const BATCH_INTERVAL = 90 * 1000       // 90s batch broadcast window
 
-let threats = {}        // { ip: { count, firstSeen, lastSeen, types: [], usernames: [], banned, banTime } }
-let battleStats = { totalBlocked: 0, totalScans: 0, totalBrute: 0, bannedToday: 0, sessionStart: new Date().toISOString() }
+let threats = {}        // { ip: { count, firstSeen, lastSeen, types: [], usernames: [], banned, banTime, region } }
+let battleStats = { totalBlocked: 0, totalScans: 0, totalBrute: 0, bannedToday: 0, cnBlocked: 0, sessionStart: new Date().toISOString() }
 let sendTgMessage = null // injected from experts.js
 
-// Whitelist — zero trust
+// ════════════════════════════════════════
+// Batch broadcast queue — 不刷屏
+// ════════════════════════════════════════
+let banQueue = []       // accumulate bans, flush every BATCH_INTERVAL
+let batchTimer = null
+
+function queueBanReport(ip, reason) {
+  const t = threats[ip] || {}
+  banQueue.push({ ip, reason, count: t.count || 0, types: t.types || [], region: t.region || '??', usernames: t.usernames || [], ts: new Date().toISOString() })
+}
+
+function flushBanQueue() {
+  if (!sendTgMessage || banQueue.length === 0) return
+  const batch = banQueue.splice(0)
+  const cnCount = batch.filter(b => b.region === 'CN').length
+  const otherCount = batch.length - cnCount
+  const lines = [
+    `⚔️ [BLUE TEAM 戰報] 批量殲滅 ${batch.length} 個敵方`,
+    `━━━━━━━━━━━━━━━━`,
+  ]
+  if (cnCount > 0) lines.push(`🇨🇳 大陸 IP: ${cnCount} 個 → 蜜罐誘導 + 封禁`)
+  if (otherCount > 0) lines.push(`🌍 其他地區: ${otherCount} 個 → 直接封禁`)
+  lines.push('')
+  // Show top 8 from this batch
+  const top = batch.sort((a, b) => b.count - a.count).slice(0, 8)
+  for (const b of top) {
+    const flag = b.region === 'CN' ? '🇨🇳' : '🌐'
+    lines.push(`  ${flag} ${b.ip} — ${b.count}次 [${b.types.join(',')}]${b.usernames.length ? ' 👤' + b.usernames.slice(-2).join(',') : ''}`)
+  }
+  if (batch.length > 8) lines.push(`  ...及其他 ${batch.length - 8} 個`)
+  lines.push('')
+  lines.push(`📊 累計: ${battleStats.totalBlocked} 殲滅 | ${battleStats.totalScans} 偵測 | 🇨🇳${battleStats.cnBlocked} 大陸攔截`)
+  lines.push(`━━━━ BLUE TEAM · 零信任 · 全自動 ━━━━`)
+  sendTgMessage(lines.join('\n'))
+}
+
+// ════════════════════════════════════════
+// China IP CIDR Ranges (major blocks)
+// ════════════════════════════════════════
+const CN_CIDRS = [
+  // CHINANET / ChinaTelecom
+  [ip2num('1.0.0.0'), ip2num('1.7.255.255')],
+  [ip2num('1.24.0.0'), ip2num('1.31.255.255')],
+  [ip2num('1.48.0.0'), ip2num('1.63.255.255')],
+  [ip2num('1.68.0.0'), ip2num('1.71.255.255')],
+  [ip2num('1.80.0.0'), ip2num('1.95.255.255')],
+  [ip2num('1.180.0.0'), ip2num('1.199.255.255')],
+  [ip2num('14.0.0.0'), ip2num('14.3.255.255')],
+  [ip2num('14.16.0.0'), ip2num('14.31.255.255')],
+  [ip2num('14.104.0.0'), ip2num('14.131.255.255')],
+  [ip2num('14.144.0.0'), ip2num('14.159.255.255')],
+  [ip2num('14.204.0.0'), ip2num('14.223.255.255')],
+  [ip2num('27.0.0.0'), ip2num('27.15.255.255')],
+  [ip2num('27.16.0.0'), ip2num('27.63.255.255')],
+  [ip2num('27.96.0.0'), ip2num('27.127.255.255')],
+  [ip2num('27.148.0.0'), ip2num('27.159.255.255')],
+  [ip2num('27.184.0.0'), ip2num('27.199.255.255')],
+  [ip2num('27.224.0.0'), ip2num('27.255.255.255')],
+  [ip2num('36.0.0.0'), ip2num('36.63.255.255')],
+  [ip2num('36.96.0.0'), ip2num('36.255.255.255')],
+  [ip2num('39.0.0.0'), ip2num('39.15.255.255')],
+  [ip2num('39.64.0.0'), ip2num('39.191.255.255')],
+  [ip2num('42.0.0.0'), ip2num('42.63.255.255')],
+  [ip2num('42.80.0.0'), ip2num('42.127.255.255')],
+  [ip2num('42.176.0.0'), ip2num('42.191.255.255')],
+  [ip2num('42.224.0.0'), ip2num('42.255.255.255')],
+  [ip2num('43.224.0.0'), ip2num('43.255.255.255')],
+  [ip2num('45.64.0.0'), ip2num('45.79.255.255')],
+  [ip2num('47.92.0.0'), ip2num('47.107.255.255')],
+  [ip2num('47.108.0.0'), ip2num('47.119.255.255')],
+  [ip2num('47.236.0.0'), ip2num('47.247.255.255')],
+  [ip2num('49.0.0.0'), ip2num('49.7.255.255')],
+  [ip2num('49.64.0.0'), ip2num('49.95.255.255')],
+  [ip2num('49.112.0.0'), ip2num('49.143.255.255')],
+  [ip2num('49.200.0.0'), ip2num('49.223.255.255')],
+  [ip2num('58.0.0.0'), ip2num('58.63.255.255')],
+  [ip2num('58.192.0.0'), ip2num('58.255.255.255')],
+  [ip2num('59.32.0.0'), ip2num('59.127.255.255')],
+  [ip2num('60.0.0.0'), ip2num('60.63.255.255')],
+  [ip2num('60.160.0.0'), ip2num('60.255.255.255')],
+  [ip2num('61.0.0.0'), ip2num('61.63.255.255')],
+  [ip2num('61.128.0.0'), ip2num('61.255.255.255')],
+  // China Unicom / China Mobile
+  [ip2num('101.0.0.0'), ip2num('101.47.255.255')],
+  [ip2num('101.64.0.0'), ip2num('101.95.255.255')],
+  [ip2num('101.224.0.0'), ip2num('101.255.255.255')],
+  [ip2num('103.0.0.0'), ip2num('103.63.255.255')],
+  [ip2num('106.0.0.0'), ip2num('106.63.255.255')],
+  [ip2num('106.224.0.0'), ip2num('106.255.255.255')],
+  [ip2num('110.0.0.0'), ip2num('110.99.255.255')],
+  [ip2num('110.144.0.0'), ip2num('110.191.255.255')],
+  [ip2num('110.192.0.0'), ip2num('110.255.255.255')],
+  [ip2num('111.0.0.0'), ip2num('111.63.255.255')],
+  [ip2num('111.112.0.0'), ip2num('111.191.255.255')],
+  [ip2num('111.192.0.0'), ip2num('111.255.255.255')],
+  [ip2num('112.0.0.0'), ip2num('112.63.255.255')],
+  [ip2num('112.64.0.0'), ip2num('112.143.255.255')],
+  [ip2num('112.192.0.0'), ip2num('112.255.255.255')],
+  [ip2num('113.0.0.0'), ip2num('113.15.255.255')],
+  [ip2num('113.16.0.0'), ip2num('113.63.255.255')],
+  [ip2num('113.64.0.0'), ip2num('113.143.255.255')],
+  [ip2num('113.194.0.0'), ip2num('113.223.255.255')],
+  [ip2num('114.16.0.0'), ip2num('114.127.255.255')],
+  [ip2num('114.192.0.0'), ip2num('114.255.255.255')],
+  [ip2num('115.0.0.0'), ip2num('115.63.255.255')],
+  [ip2num('115.96.0.0'), ip2num('115.191.255.255')],
+  [ip2num('115.192.0.0'), ip2num('115.255.255.255')],
+  [ip2num('116.0.0.0'), ip2num('116.63.255.255')],
+  [ip2num('116.112.0.0'), ip2num('116.143.255.255')],
+  [ip2num('116.192.0.0'), ip2num('116.255.255.255')],
+  [ip2num('117.0.0.0'), ip2num('117.127.255.255')],
+  [ip2num('117.128.0.0'), ip2num('117.191.255.255')],
+  [ip2num('118.0.0.0'), ip2num('118.63.255.255')],
+  [ip2num('118.64.0.0'), ip2num('118.95.255.255')],
+  [ip2num('118.112.0.0'), ip2num('118.143.255.255')],
+  [ip2num('118.176.0.0'), ip2num('118.255.255.255')],
+  [ip2num('119.0.0.0'), ip2num('119.63.255.255')],
+  [ip2num('119.96.0.0'), ip2num('119.191.255.255')],
+  [ip2num('119.224.0.0'), ip2num('119.255.255.255')],
+  [ip2num('120.0.0.0'), ip2num('120.95.255.255')],
+  [ip2num('120.128.0.0'), ip2num('120.255.255.255')],
+  [ip2num('121.0.0.0'), ip2num('121.63.255.255')],
+  [ip2num('121.192.0.0'), ip2num('121.255.255.255')],
+  [ip2num('122.0.0.0'), ip2num('122.127.255.255')],
+  [ip2num('122.128.0.0'), ip2num('122.255.255.255')],
+  [ip2num('123.0.0.0'), ip2num('123.15.255.255')],
+  [ip2num('123.64.0.0'), ip2num('123.191.255.255')],
+  [ip2num('124.0.0.0'), ip2num('124.63.255.255')],
+  [ip2num('124.64.0.0'), ip2num('124.159.255.255')],
+  [ip2num('124.192.0.0'), ip2num('124.255.255.255')],
+  [ip2num('125.0.0.0'), ip2num('125.47.255.255')],
+  [ip2num('125.64.0.0'), ip2num('125.127.255.255')],
+  [ip2num('125.160.0.0'), ip2num('125.255.255.255')],
+  // Alibaba Cloud / Tencent Cloud / Huawei Cloud
+  [ip2num('139.0.0.0'), ip2num('139.31.255.255')],
+  [ip2num('139.128.0.0'), ip2num('139.255.255.255')],
+  [ip2num('140.64.0.0'), ip2num('140.143.255.255')],
+  [ip2num('140.192.0.0'), ip2num('140.255.255.255')],
+  [ip2num('144.0.0.0'), ip2num('144.63.255.255')],
+  [ip2num('150.0.0.0'), ip2num('150.63.255.255')],
+  [ip2num('150.128.0.0'), ip2num('150.255.255.255')],
+  [ip2num('152.104.0.0'), ip2num('152.111.255.255')],
+  [ip2num('153.0.0.0'), ip2num('153.63.255.255')],
+  [ip2num('157.0.0.0'), ip2num('157.31.255.255')],
+  [ip2num('159.224.0.0'), ip2num('159.255.255.255')],
+  [ip2num('163.0.0.0'), ip2num('163.63.255.255')],
+  [ip2num('163.125.0.0'), ip2num('163.191.255.255')],
+  [ip2num('166.111.0.0'), ip2num('166.111.255.255')],
+  [ip2num('167.128.0.0'), ip2num('167.191.255.255')],
+  [ip2num('168.160.0.0'), ip2num('168.191.255.255')],
+  [ip2num('171.0.0.0'), ip2num('171.127.255.255')],
+  [ip2num('175.0.0.0'), ip2num('175.63.255.255')],
+  [ip2num('175.96.0.0'), ip2num('175.191.255.255')],
+  [ip2num('180.64.0.0'), ip2num('180.127.255.255')],
+  [ip2num('180.128.0.0'), ip2num('180.223.255.255')],
+  [ip2num('182.16.0.0'), ip2num('182.63.255.255')],
+  [ip2num('182.80.0.0'), ip2num('182.143.255.255')],
+  [ip2num('182.144.0.0'), ip2num('182.255.255.255')],
+  [ip2num('183.0.0.0'), ip2num('183.127.255.255')],
+  [ip2num('183.128.0.0'), ip2num('183.255.255.255')],
+  [ip2num('202.0.0.0'), ip2num('202.63.255.255')],
+  [ip2num('202.96.0.0'), ip2num('202.111.255.255')],
+  [ip2num('210.0.0.0'), ip2num('210.63.255.255')],
+  [ip2num('211.64.0.0'), ip2num('211.167.255.255')],
+  [ip2num('218.0.0.0'), ip2num('218.127.255.255')],
+  [ip2num('219.64.0.0'), ip2num('219.255.255.255')],
+  [ip2num('220.96.0.0'), ip2num('220.255.255.255')],
+  [ip2num('221.0.0.0'), ip2num('221.15.255.255')],
+  [ip2num('221.176.0.0'), ip2num('221.255.255.255')],
+  [ip2num('222.0.0.0'), ip2num('222.63.255.255')],
+  [ip2num('222.64.0.0'), ip2num('222.255.255.255')],
+  [ip2num('223.0.0.0'), ip2num('223.63.255.255')],
+  [ip2num('223.64.0.0'), ip2num('223.255.255.255')],
+]
+
+function ip2num(ip) {
+  const parts = ip.split('.').map(Number)
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+}
+
+function isChinaIP(ip) {
+  const num = ip2num(ip)
+  for (const [start, end] of CN_CIDRS) {
+    if (num >= start && num <= end) return true
+  }
+  return false
+}
+
+// Whitelist — zero trust (never ban these)
 const DEFAULT_WHITELIST = [
   '127.0.0.1',
   '::1',
-  // DigitalOcean internal monitoring
+  // DigitalOcean internal
   '10.0.0.0/8',
   '169.254.169.254',
+  // VPS itself
+  '167.71.13.130',
 ]
 
 let whitelist = [...DEFAULT_WHITELIST]
@@ -101,11 +292,12 @@ function isWhitelisted(ip) {
 function recordThreat(ip, type, detail) {
   if (isWhitelisted(ip)) return null
   if (!threats[ip]) {
-    threats[ip] = { count: 0, firstSeen: new Date().toISOString(), lastSeen: null, types: [], usernames: [], banned: false, banTime: null, details: [] }
+    threats[ip] = { count: 0, firstSeen: new Date().toISOString(), lastSeen: null, types: [], usernames: [], banned: false, banTime: null, details: [], region: isChinaIP(ip) ? 'CN' : '??' }
   }
   const t = threats[ip]
   t.count++
   t.lastSeen = new Date().toISOString()
+  if (!t.region) t.region = isChinaIP(ip) ? 'CN' : '??'
   if (!t.types.includes(type)) t.types.push(type)
   if (detail && !t.details.includes(detail)) {
     t.details.push(detail)
@@ -124,13 +316,17 @@ function recordThreat(ip, type, detail) {
   battleStats.totalScans++
   if (type === 'ssh_brute') battleStats.totalBrute++
 
+  // China IP: instant ban at threshold 1 + tag + honeypot redirect
+  const threshold = t.region === 'CN' ? 1 : BAN_THRESHOLD
+
   // Auto-ban at threshold
-  if (t.count >= BAN_THRESHOLD && !t.banned) {
-    banIP(ip, `Auto-ban: ${t.count} strikes [${t.types.join(',')}]`)
-    return { action: 'BANNED', ip, count: t.count, types: t.types }
+  if (t.count >= threshold && !t.banned) {
+    if (t.region === 'CN') battleStats.cnBlocked++
+    banIP(ip, `Auto-ban: ${t.count} strikes [${t.types.join(',')}]${t.region === 'CN' ? ' 🇨🇳CN' : ''}`)
+    return { action: 'BANNED', ip, count: t.count, types: t.types, region: t.region }
   }
 
-  return { action: 'TRACKED', ip, count: t.count, types: t.types }
+  return { action: 'TRACKED', ip, count: t.count, types: t.types, region: t.region }
 }
 
 // ════════════════════════════════════════
@@ -138,7 +334,6 @@ function recordThreat(ip, type, detail) {
 // ════════════════════════════════════════
 function banIP(ip, reason) {
   if (isWhitelisted(ip)) return false
-  const t = threats[ip] || {}
 
   // UFW ban
   const ufw = spawn('ufw', ['insert', '1', 'deny', 'from', ip, 'to', 'any', 'comment', `defender:${reason.slice(0, 40)}`])
@@ -153,32 +348,11 @@ function banIP(ip, reason) {
       battleStats.bannedToday++
       saveThreats()
 
-      // 小愛播報
-      broadcastBan(ip, reason)
+      // Queue for batch broadcast (不刷屏)
+      queueBanReport(ip, reason)
     }
   })
   return true
-}
-
-function broadcastBan(ip, reason) {
-  if (!sendTgMessage) return
-  const t = threats[ip] || {}
-  const emoji = t.types?.includes('ssh_brute') ? '🔒' : t.types?.includes('web_scan') ? '🛡' : '⚔️'
-  const msg = [
-    `${emoji} [自動防禦] 敵方已殲滅`,
-    `━━━━━━━━━━━━━━━━`,
-    `🎯 IP: \`${ip}\``,
-    `💀 攻擊次數: ${t.count || '?'}`,
-    `🔍 攻擊類型: ${(t.types || []).join(', ')}`,
-    t.usernames?.length ? `👤 嘗試用戶: ${t.usernames.slice(-5).join(', ')}` : null,
-    `📋 原因: ${reason}`,
-    `⏰ 首次發現: ${t.firstSeen || 'N/A'}`,
-    `🚫 狀態: 永久封禁 (UFW DROP)`,
-    `━━━━━━━━━━━━━━━━`,
-    `📊 今日戰績: ${battleStats.bannedToday} 殲滅 | ${battleStats.totalScans} 偵測`,
-  ].filter(Boolean).join('\n')
-
-  sendTgMessage(msg)
 }
 
 // ════════════════════════════════════════
@@ -312,9 +486,11 @@ function generateBattleReport() {
   const now = new Date()
   const activeThreats = Object.entries(threats).filter(([, t]) => {
     const lastSeen = new Date(t.lastSeen)
-    return (now - lastSeen) < 24 * 60 * 60 * 1000 // last 24h
+    return (now - lastSeen) < 24 * 60 * 60 * 1000
   })
   const banned = activeThreats.filter(([, t]) => t.banned)
+  const cnThreats = Object.entries(threats).filter(([, t]) => t.region === 'CN')
+  const cnBanned = cnThreats.filter(([, t]) => t.banned)
   const topAttackers = activeThreats.sort((a, b) => b[1].count - a[1].count).slice(0, 5)
 
   const lines = [
@@ -324,6 +500,7 @@ function generateBattleReport() {
     `⚔️ 本輪偵測: ${battleStats.totalScans} 次威脅`,
     `💀 已殲滅: ${battleStats.totalBlocked} 個敵方 IP`,
     `🔒 SSH 爆破攔截: ${battleStats.totalBrute} 次`,
+    `🇨🇳 大陸 IP 攔截: ${cnBanned.length} 個 (共偵測 ${cnThreats.length})`,
     `📋 24h 活躍威脅: ${activeThreats.length} 個`,
     `🚫 已封禁: ${banned.length} 個`,
     ``,
@@ -331,12 +508,14 @@ function generateBattleReport() {
   ]
 
   for (const [ip, t] of topAttackers) {
-    const status = t.banned ? '🚫已封禁' : '⚠️追蹤中'
-    lines.push(`  ${status} ${ip} — ${t.count}次 [${t.types.join(',')}]`)
+    const status = t.banned ? '🚫' : '⚠️'
+    const flag = t.region === 'CN' ? '🇨🇳' : '🌐'
+    lines.push(`  ${status}${flag} ${ip} — ${t.count}次 [${t.types.join(',')}]`)
   }
 
   lines.push(``)
   lines.push(`🤖 自動防禦引擎運行中...`)
+  lines.push(`🍯 蜜罐已部署: /admin /wp-login /trap /.env.backup`)
   lines.push(`━━━━ BLUE TEAM · 零信任 · 全自動 ━━━━`)
 
   return lines.join('\n')
@@ -437,6 +616,9 @@ function getDefenderStatus() {
     .slice(0, 20)
     .map(([ip, t]) => ({ ip, ...t }))
 
+  const cnTotal = Object.entries(threats).filter(([, t]) => t.region === 'CN').length
+  const cnBanned = Object.entries(threats).filter(([, t]) => t.region === 'CN' && t.banned).length
+
   return {
     running: true,
     stats: battleStats,
@@ -445,6 +627,8 @@ function getDefenderStatus() {
     totalBanned: banned.length,
     topAttackers,
     whitelist: whitelist.length,
+    cnTotal,
+    cnBanned,
   }
 }
 
@@ -500,6 +684,9 @@ function startDefender(tgSendFn) {
   // Start battle report timer
   startBattleReportTimer()
 
+  // Start batch broadcast timer (flush ban queue every 90s)
+  batchTimer = setInterval(flushBanQueue, BATCH_INTERVAL)
+
   // Save threats periodically
   setInterval(saveThreats, 5 * 60 * 1000)
 
@@ -510,6 +697,8 @@ function stopDefender() {
   for (const w of watchers) { try { w.kill() } catch {} }
   watchers = []
   if (reportTimer) clearInterval(reportTimer)
+  if (batchTimer) clearInterval(batchTimer)
+  flushBanQueue() // flush remaining
   saveThreats()
   console.log('[Defender] Defender stopped')
 }
