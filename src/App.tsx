@@ -7,6 +7,7 @@ import AuditReport, { AuditData } from './components/AuditReport'
 import SettingsPanel from './components/SettingsPanel'
 import DOShieldPanel from './components/DOShieldPanel'
 import TaskPanel from './components/TaskPanel'
+import TeamStatus from './components/TeamStatus'
 
 type Page = 'device' | 'teammate' | 'ai' | 'audit' | 'tasks' | 'do' | 'settings'
 
@@ -209,6 +210,11 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* Team status bar */}
+      <div className="shrink-0 px-5 pt-4">
+        <TeamStatus />
+      </div>
 
       {/* Main content */}
       <main className="flex-1 min-h-0 p-5 overflow-hidden">

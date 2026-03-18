@@ -16,6 +16,18 @@ const dashboard = require('./dashboard')
 const PIN = process.env.PIN_CODE || '684861'
 const pinTokens = new Set()
 
+const teammates = {
+  mac: { online: false, lastSeen: null, data: {} },
+  win: { online: false, lastSeen: null, data: {} },
+}
+function checkTeammateTimeout() {
+  const now = Date.now()
+  for (const t of Object.values(teammates)) {
+    if (t.lastSeen && now - t.lastSeen > 60000) t.online = false
+  }
+}
+setInterval(checkTeammateTimeout, 15000)
+
 function startAllBots() {
   const tokens = [
     process.env.BOT_TOKEN_CHOU,
@@ -190,6 +202,20 @@ app.post('/api/dashboard/toggle', (req, res) => {
   const { enabled } = req.body
   if (enabled) { dashboard.startDashboard() } else { dashboard.stopDashboard() }
   res.json({ ok: true, running: enabled })
+})
+
+app.get('/api/teammates', (_req, res) => {
+  checkTeammateTimeout()
+  res.json(teammates)
+})
+
+app.post('/api/heartbeat', (req, res) => {
+  const { os, firewall, defender, stealth, openPorts, connections, suspicious, hostname } = req.body
+  const key = (os || '').toLowerCase() === 'win' ? 'win' : 'mac'
+  teammates[key].online = true
+  teammates[key].lastSeen = Date.now()
+  teammates[key].data = { firewall, defender, stealth, openPorts, connections, suspicious, hostname, ts: new Date().toISOString() }
+  res.json({ ok: true })
 })
 
 app.get('/api/settings', (_req, res) => {
