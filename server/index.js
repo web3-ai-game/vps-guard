@@ -13,6 +13,9 @@ const experts = require('./experts')
 const tasks = require('./tasks')
 const dashboard = require('./dashboard')
 const loggerModule = require('./logger')
+const ops = require('./ops')
+const vault = require('./vault')
+const watcher = require('./watcher')
 
 const PIN = process.env.PIN_CODE || '684861'
 const pinTokens = new Set()
@@ -34,6 +37,7 @@ function startAllBots() {
     process.env.BOT_TOKEN_CHOU,
     process.env.BOT_TOKEN_ONION,
     process.env.BOT_TOKEN_XIAOAI,
+    process.env.BOT_TOKEN_WIN,
   ].filter(Boolean)
   const groupId = process.env.TELEGRAM_CHAT_ID
   const updateTeammate = (os, data) => {
@@ -555,6 +559,145 @@ app.get('/api/audit', async (_req, res) => {
   })
 })
 
+
+// ════════════════════════════════════════
+// OPS — 運維操作中心 API
+// ════════════════════════════════════════
+app.get('/api/ops/resources', async (_req, res) => {
+  try {
+    const data = await ops.getSystemResources()
+    res.json(data)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/ops/commands', (_req, res) => {
+  res.json({ commands: ops.getCommandList() })
+})
+
+app.post('/api/ops/run', async (req, res) => {
+  const { cmdId } = req.body
+  try {
+    const result = await ops.runCommand(cmdId)
+    res.json(result)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/ops/sync', async (_req, res) => {
+  try {
+    const result = await ops.fullSync()
+    res.json(result)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/ops/autoscale', async (_req, res) => {
+  try {
+    const check = await ops.checkAutoScale()
+    res.json(check)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/ops/autoscale', async (req, res) => {
+  const { region } = req.body
+  try {
+    const result = await ops.autoScale(region)
+    res.json(result)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// ════════════════════════════════════════
+// VAULT — 機密運算容器 API
+// ════════════════════════════════════════
+app.get('/api/vault/status', (_req, res) => {
+  try {
+    res.json(vault.getVaultStatus())
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/vault/stats', (req, res) => {
+  try {
+    const stats = vault.getChatStats(req.query.date)
+    res.json(stats)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/vault/chats', (req, res) => {
+  try {
+    const msgs = vault.getUserChatHistory(req.query.user, req.query.date)
+    res.json({ messages: msgs.slice(-100), total: msgs.length })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/vault/analyze', async (req, res) => {
+  try {
+    const result = await vault.analyzeChats(req.body.date, req.body.prompt)
+    res.json(result)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/vault/dates', (_req, res) => {
+  try {
+    res.json(vault.listAvailableDates())
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/vault/analysis/:date', (req, res) => {
+  try {
+    const data = vault.loadAnalysis(req.params.date)
+    if (!data) return res.status(404).json({ error: 'No analysis found' })
+    res.json(data)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// ════════════════════════════════════════
+// WATCHER — VPS 變動監控 + 緩存 API
+// ════════════════════════════════════════
+app.get('/api/watcher/status', (_req, res) => {
+  try { res.json(watcher.getWatchStatus()) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/watcher/scan', (_req, res) => {
+  try {
+    const result = watcher.detectChanges()
+    res.json(result)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/watcher/changes', (_req, res) => {
+  try { res.json({ changes: watcher.getCachedChanges() }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/watcher/sync-status', (_req, res) => {
+  try { res.json(watcher.getSyncStatus()) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/watcher/sync-report', (req, res) => {
+  const { platform, commit, branch, files } = req.body
+  try {
+    const status = watcher.updateSyncStatus(platform || 'unknown', { commit, branch, files })
+    res.json({ ok: true, status })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/watcher/cache', (req, res) => {
+  const { key, content } = req.body
+  if (!key) return res.status(400).json({ error: 'key required' })
+  try {
+    watcher.cacheContent(key, content)
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.get('/api/watcher/cache/:key', (req, res) => {
+  try {
+    const content = watcher.getCachedContent(req.params.key)
+    if (content === null) return res.status(404).json({ error: 'not found' })
+    res.json({ key: req.params.key, content })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 app.get('*', (_req, res) => {
   const index = path.join(__dirname, '..', 'dist', 'index.html')
   if (require('fs').existsSync(index)) res.sendFile(index)
@@ -566,3 +709,26 @@ const HOST = process.env.HOST || '0.0.0.0'
 server.listen(PORT, HOST, () => {
   console.log(`Blue Team backend running at http://${HOST}:${PORT}`)
 })
+
+// 啟動 VPS 變動監控 (每 60 秒掃描)
+setTimeout(() => {
+  try {
+    watcher.startWatching(60000, (changes) => {
+      const total = changes.added.length + changes.modified.length + changes.deleted.length
+      console.log(`[Watcher] Detected ${total} changes`)
+      // 自動通知到 TG 群
+      if (total > 0 && experts.isRunning()) {
+        const msg = [
+          '🔍 [VPS 變動偵測]',
+          changes.added.length ? `➕ 新增: ${changes.added.map(f => f.file.split('/').pop()).join(', ')}` : '',
+          changes.modified.length ? `✏️ 修改: ${changes.modified.map(f => f.file.split('/').pop()).join(', ')}` : '',
+          changes.deleted.length ? `🗑 刪除: ${changes.deleted.map(f => f.file.split('/').pop()).join(', ')}` : '',
+          `⏱ ${new Date().toLocaleTimeString('zh-TW', { timeZone: 'Asia/Taipei' })}`,
+        ].filter(Boolean).join('\n')
+        experts.sendAsBot('xiaoai', msg, null).catch(() => {})
+      }
+    })
+  } catch (e) {
+    console.error('[Watcher] start error:', e.message)
+  }
+}, 10000)

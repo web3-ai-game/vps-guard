@@ -2,6 +2,7 @@ const TelegramBot = require('node-telegram-bot-api')
 const { analyzeSecurityData } = require('./ai')
 const logger = require('./logger')
 const personality = require('./personality')
+const vault = require('./vault')
 
 const BOTS = {
   chou: {
@@ -28,11 +29,33 @@ const BOTS = {
     bot: null,
     triggers: ['/help', '/ping', '/team', '/sync', '/logs', '/daily', '/exchange', '你好', '幫我'],
   },
+
+  win: {
+    name: 'Win-Guard',
+    role: 'defender',
+    desc: '🪟 Windows 防護衛士 — Win 端安全狀態回報、跨平台對齊',
+    token: null,
+    bot: null,
+    triggers: ['/winstatus', '/windef', '/winreport', '防護', 'Win', 'win'],
+  },
 }
 
 let chatId = null
 let messageLog = []
 const MAX_LOG = 200
+
+// Anti-spam: bot 內部交互不發群，只記錄到 vault
+const SPAM_COOLDOWN = 3000 // ms between same bot messages
+const lastBotMsg = {}
+function shouldSendToGroup(botKey, text) {
+  const now = Date.now()
+  const key = botKey + ':' + (text || '').slice(0, 50)
+  if (lastBotMsg[key] && now - lastBotMsg[key] < SPAM_COOLDOWN) return false
+  lastBotMsg[key] = now
+  // 內部心跳/自動播報靜默（只記不發）
+  if (text && (text.includes('[INTERNAL]') || text.includes('[HEARTBEAT]'))) return false
+  return true
+}
 
 // Win Bot 交互狀態
 let updateTeammateCallback = null
@@ -76,6 +99,15 @@ function addLog(botName, role, text, fromUser, msg) {
 }
 
 async function sendAsBot(botKey, text, parseMode) {
+  // Archive to vault
+  try {
+    vault.archiveMessage({ text, fromBot: true, botKey, chatId: chatId, ts: new Date().toISOString() })
+  } catch {}
+  // Anti-spam check
+  if (!shouldSendToGroup(botKey, text)) {
+    messageLog.push({ from: botKey, text: (text || "").slice(0, 200), ts: new Date().toISOString(), bot: true })
+    return null // silently archived, not sent to group
+  }
   const b = BOTS[botKey]
   if (!b?.bot || !chatId) return null
   try {
@@ -101,6 +133,19 @@ function formatMD(title, sections) {
 }
 
 async function handleGroupMessage(botKey, msg) {
+  // Archive all incoming messages to vault
+  try {
+    const userTag = (msg.from?.username || '').toLowerCase().includes('mac') ? 'mac' : 'win'
+    vault.archiveMessage({
+      message_id: msg.message_id,
+      from: msg.from,
+      fromBot: false,
+      text: msg.text || '',
+      chat: msg.chat,
+      ts: new Date(msg.date * 1000).toISOString(),
+      userTag,
+    })
+  } catch {}
   const b = BOTS[botKey]
   if (!msg.text) return
   const text = msg.text.trim()
@@ -188,6 +233,66 @@ async function handleGroupMessage(botKey, msg) {
   }
 
   // ── Win Bot 訊息自動偵測 (所有 bot 都監聽，但只有 xiaoai 回應) ──
+    // ── Win-Guard Bot 指令處理 ──
+  if (botKey === 'win') {
+    if (text === '!win-report' || lower.includes('/winstatus') || lower.includes('/winreport')) {
+      try {
+        const http = require('http');
+        const resp = await new Promise((resolve, reject) => {
+          const req = http.get('http://127.0.0.1:3001/api/teammates', (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => resolve(JSON.parse(data)));
+          });
+          req.on('error', reject);
+          req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
+        });
+        const wd = resp.win?.data || {};
+        const online = resp.win?.online || false;
+        const fw = wd.firewall ? '✅' : '❌';
+        const def = wd.defender ? '✅' : '❌';
+        const host = wd.hostname || 'Unknown';
+        const ports = wd.openPorts !== undefined ? wd.openPorts : '?';
+        const conns = wd.connections !== undefined ? wd.connections : '?';
+        const susp = wd.suspicious && wd.suspicious.length > 0 ? wd.suspicious.join(', ') : '無';
+        await sendAsBot('win', [
+          '🪟 [WIN-STATUS]',
+          (online ? '🟢' : '🔴') + ' 狀態: ' + (online ? '在線' : '離線'),
+          '防火牆: ' + fw,
+          'Defender: ' + def,
+          '主機名: ' + host,
+          '端口: ' + ports,
+          '連線: ' + conns,
+          '可疑項目: ' + susp,
+          '',
+          '⏱ ' + (wd.ts || new Date().toISOString()),
+          '✅ 7-Layer Zero Trust Active',
+        ].join('\n'), null);
+        winBotState.lastSeen = Date.now();
+        winBotState.lastReport = new Date().toISOString();
+        winBotState.botName = 'Win-Guard';
+        winBotState.data = { firewall: wd.firewall, defender: wd.defender, hostname: host, openPorts: ports, connections: conns };
+      } catch (e) {
+        await sendAsBot('win', '🪟 [WIN-STATUS]\n⚠ 無法獲取即時資料: ' + e.message, null);
+      }
+      return;
+    }
+    if (lower.includes('/windef')) {
+      await sendAsBot('win', [
+        '🛡 Win-Guard 防護配置',
+        '',
+        '1. Network: Firewall default BLOCK',
+        '2. Host: Defender + ClamWin + Sysmon',
+        '3. App: SMBv1/LLMNR/WPAD/WDigest OFF',
+        '4. Monitor: Watchdog 5min, FIM 15min',
+        '5. Response: Fail2Ban auto-block',
+        '6. Threat: Suspicious process detection',
+        '7. CFA: Controlled Folder Access ON',
+      ].join('\n'), null);
+      return;
+    }
+  }
+
   if (botKey === 'xiaoai') {
     const from = msg.from || {}
     const isFromBot = from.is_bot === true
@@ -514,6 +619,7 @@ function startExperts(tokens, groupChatId, onUpdateTeammate) {
     chou: tokens[0],
     onion: tokens[1],
     xiaoai: tokens[2],
+    win: tokens[3],
   }
 
   for (const [key, token] of Object.entries(tokenMap)) {

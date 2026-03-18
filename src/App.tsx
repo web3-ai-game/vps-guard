@@ -8,8 +8,9 @@ import SettingsPanel from './components/SettingsPanel'
 import DOShieldPanel from './components/DOShieldPanel'
 import TaskPanel from './components/TaskPanel'
 import TeamStatus from './components/TeamStatus'
+import CommandPanel from './components/CommandPanel'
 
-type Page = 'device' | 'teammate' | 'ai' | 'audit' | 'tasks' | 'do' | 'settings'
+type Page = 'device' | 'teammate' | 'ai' | 'audit' | 'tasks' | 'do' | 'settings' | 'ops'
 
 interface LogLine {
   id: number
@@ -140,6 +141,7 @@ export default function App() {
     { id: 'audit',    label: '稽查報告',   icon: '📋',  color: 'amber' },
     { id: 'tasks',    label: '藍隊任務',   icon: '⚡',  color: 'rose' },
     { id: 'do',       label: 'DO 雲盾',    icon: '☁',   color: 'blue' },
+    { id: 'ops',       label: '🔧 運維',    icon: '🔧',  color: 'orange' },
     { id: 'settings', label: '設定',       icon: '⚙',   color: 'slate' },
   ]
 
@@ -152,6 +154,7 @@ export default function App() {
     amber:   'bg-amber-950/70 text-amber-300 border-amber-700/80 shadow-amber-900/30',
     rose:    'bg-rose-950/70 text-rose-300 border-rose-700/80 shadow-rose-900/30',
     blue:    'bg-blue-950/70 text-blue-300 border-blue-700/80 shadow-blue-900/30',
+    orange:  'bg-orange-950/70 text-orange-300 border-orange-700/80 shadow-orange-900/30',
     slate:   'bg-slate-800/70 text-slate-300 border-slate-600/80 shadow-slate-900/30',
   }
 
@@ -237,6 +240,7 @@ export default function App() {
         {page === 'audit' && <AuditReport data={auditData} loading={auditLoading} onRun={runAudit} />}
         {page === 'tasks' && <TaskPanel />}
         {page === 'do' && <DOShieldPanel />}
+        {page === 'ops' && <CommandPanel />}
         {page === 'settings' && <SettingsPanel />}
       </main>
 
