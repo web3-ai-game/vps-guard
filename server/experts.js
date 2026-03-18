@@ -32,6 +32,18 @@ let chatId = null
 let messageLog = []
 const MAX_LOG = 200
 
+// Win Bot 交互狀態
+let updateTeammateCallback = null
+const winBotState = {
+  lastReport: null,
+  lastSeen: null,
+  botUsername: null,
+  botName: null,
+  data: {},
+}
+
+function getWinBotState() { return winBotState }
+
 function getLog() { return messageLog.slice(-50) }
 function getChatId() { return chatId }
 
@@ -133,7 +145,131 @@ async function handleGroupMessage(botKey, msg) {
     }
   }
 
+  // ── Win Bot 訊息自動偵測 (所有 bot 都監聽，但只有 xiaoai 回應) ──
   if (botKey === 'xiaoai') {
+    const from = msg.from || {}
+    const isFromBot = from.is_bot === true
+    const isOurBot = ['chou', 'onion', 'xiaoai'].some(k => BOTS[k].bot?.options?.username && from.username === BOTS[k].bot.options.username)
+
+    // 偵測 Win Bot 狀態報告 (來自其他 bot 或含有 WIN 標記的訊息)
+    if ((isFromBot && !isOurBot) || text.includes('[WIN') || text.includes('🪟') || text.includes('[AGENT]')) {
+      const parsed = parseWinBotReport(text)
+      if (parsed && Object.keys(parsed).length > 0) {
+        winBotState.lastReport = text
+        winBotState.lastSeen = Date.now()
+        winBotState.botName = from.first_name || from.username || 'Win Bot'
+        winBotState.botUsername = from.username || null
+        winBotState.data = { ...winBotState.data, ...parsed }
+
+        // 回傳到 index.js 更新 teammates 狀態
+        if (updateTeammateCallback) {
+          updateTeammateCallback('win', {
+            firewall: parsed.firewall,
+            defender: parsed.defender,
+            hostname: parsed.hostname,
+            openPorts: parsed.openPorts,
+            connections: parsed.connections,
+            suspicious: parsed.suspicious,
+          })
+        }
+
+        // 小愛自動回應確認收到
+        const summary = []
+        if (parsed.firewall !== undefined) summary.push(`防火牆: ${parsed.firewall ? '✅' : '❌'}`)
+        if (parsed.defender !== undefined) summary.push(`Defender: ${parsed.defender ? '✅' : '❌'}`)
+        if (parsed.hostname) summary.push(`主機: ${parsed.hostname}`)
+        if (parsed.openPorts !== undefined) summary.push(`端口: ${parsed.openPorts}`)
+        if (parsed.connections !== undefined) summary.push(`連線: ${parsed.connections}`)
+
+        await sendAsBot('xiaoai', [
+          `📡 收到 Win 隊友回報！`,
+          `👤 ${winBotState.botName}`,
+          `📊 ${summary.join(' · ')}`,
+          parsed.suspicious?.length ? `⚠ 可疑項: ${parsed.suspicious.join(', ')}` : '✅ 無可疑項目',
+          `⏱ ${new Date().toLocaleTimeString('zh-TW', { timeZone: 'Asia/Taipei' })}`,
+        ].join('\n'), null)
+        return
+      }
+    }
+
+    // ── /team 跨平台狀態對齊 ──
+    if (lower.includes('/team')) {
+      const macData = updateTeammateCallback ? '__MAC__' : null
+      const winAge = winBotState.lastSeen ? Math.floor((Date.now() - winBotState.lastSeen) / 1000) : null
+      const winOnline = winAge !== null && winAge < 120
+      const wd = winBotState.data
+
+      const report = [
+        '🛡 *藍隊雙端狀態對齊*',
+        '',
+        '🍎 *Mac 主控*',
+        `  狀態: ● 在線 (本機)`,
+        `  VPS: 167.71.13.130:3001`,
+        `  服務: 運行 ${process.uptime().toFixed(0)}s`,
+        '',
+        `🪟 *Win 隊友*`,
+        `  狀態: ${winOnline ? '● 在線' : '○ 離線'}${winAge !== null ? ` · ${winAge < 60 ? winAge + 's 前' : Math.floor(winAge/60) + 'm 前'}` : ' · 從未回報'}`,
+        wd.hostname ? `  主機: ${wd.hostname}` : '',
+        wd.firewall !== undefined ? `  防火牆: ${wd.firewall ? '✅ 啟用' : '❌ 關閉'}` : '  防火牆: ❓ 未知',
+        wd.defender !== undefined ? `  Defender: ${wd.defender ? '✅ 啟用' : '❌ 關閉'}` : '  Defender: ❓ 未知',
+        wd.openPorts !== undefined ? `  端口: ${wd.openPorts}` : '',
+        wd.connections !== undefined ? `  連線: ${wd.connections}` : '',
+        '',
+        winOnline ? '✅ 雙端在線，防護同步中' : '⚠ Win 端離線，請隊友執行心跳腳本',
+      ].filter(Boolean).join('\n')
+
+      await sendAsBot('xiaoai', report, 'Markdown')
+      return
+    }
+
+    // ── /sync 請求 Win Bot 回報 ──
+    if (lower.includes('/sync')) {
+      await sendAsBot('xiaoai', [
+        '🔄 *同步請求已發送*',
+        '',
+        '📡 請 Win 隊友的 Bot 回報狀態',
+        '格式範例:',
+        '```',
+        '🪟 [WIN-STATUS]',
+        '防火牆: ✅',
+        'Defender: ✅',
+        '主機名: DESKTOP-XXX',
+        '端口: 5',
+        '連線: 23',
+        '```',
+        '',
+        '💡 或直接在 PowerShell 執行心跳腳本',
+        '詳見: /root/X/SETUP-WIN.md',
+      ].join('\n'), 'Markdown')
+
+      // 同時發送一個觸發指令讓 Win Bot 能識別
+      await sendAsBot('xiaoai', '!win-report', null)
+      return
+    }
+
+    // ── /wincheck 查看 Win Bot 狀態 ──
+    if (lower.includes('/wincheck')) {
+      if (!winBotState.lastSeen) {
+        await sendAsBot('xiaoai', '🪟 Win Bot 尚未回報過任何狀態\n\n💡 請隊友:\n1. 啟動 Win Bot\n2. 執行心跳腳本\n3. 或在群裡發送帶 [WIN-STATUS] 標記的狀態報告', null)
+      } else {
+        const age = Math.floor((Date.now() - winBotState.lastSeen) / 1000)
+        const wd = winBotState.data
+        await sendAsBot('xiaoai', [
+          `🪟 Win Bot 最近狀態`,
+          `👤 ${winBotState.botName || '未知'}`,
+          `⏱ ${age < 60 ? age + ' 秒前' : Math.floor(age/60) + ' 分鐘前'}`,
+          wd.hostname ? `🖥 ${wd.hostname}` : '',
+          wd.firewall !== undefined ? `🛡 防火牆: ${wd.firewall ? '✅' : '❌'}` : '',
+          wd.defender !== undefined ? `🔰 Defender: ${wd.defender ? '✅' : '❌'}` : '',
+          wd.openPorts !== undefined ? `📡 端口: ${wd.openPorts}` : '',
+          wd.connections !== undefined ? `🔗 連線: ${wd.connections}` : '',
+          '',
+          age > 120 ? '⚠ 已超過 2 分鐘未回報' : '✅ 狀態正常',
+        ].filter(Boolean).join('\n'), null)
+      }
+      return
+    }
+
     if (lower.includes('/fullscan')) {
       try {
         const tasks = require('./tasks')
@@ -178,6 +314,11 @@ async function handleGroupMessage(botKey, msg) {
         '  /analyze — Grok 4 深度分析',
         '  /report — 態勢摘要',
         '',
+        '🪟 Win 隊友交互：',
+        '  /team — 雙端狀態對齊',
+        '  /sync — 請求 Win Bot 回報',
+        '  /wincheck — 查看 Win Bot 狀態',
+        '',
         '💬 其他：',
         '  /help — 顯示此幫助',
         '  /ping — 連線測試',
@@ -206,8 +347,46 @@ async function handleGroupMessage(botKey, msg) {
   }
 }
 
-function startExperts(tokens, groupChatId) {
+// ── Win Bot 訊息解析器 ──
+function parseWinBotReport(text) {
+  const data = {}
+  const t = text.replace(/\*/g, '')
+
+  // 防火牆
+  if (/防火牆/i.test(t)) {
+    data.firewall = /✅|已啟用|Enabled|True|on/i.test(t.match(/防火牆[:\s]*([^\n]*)/i)?.[1] || '')
+  }
+  // Defender
+  if (/Defender/i.test(t)) {
+    data.defender = /✅|已啟用|Enabled|True|on/i.test(t.match(/Defender[:\s]*([^\n]*)/i)?.[1] || '')
+  }
+  // 主機名
+  const hostMatch = t.match(/主機名?[:\s]*([A-Za-z0-9_-]+)/i) || t.match(/hostname[:\s]*([A-Za-z0-9_-]+)/i) || t.match(/COMPUTERNAME[:\s]*([A-Za-z0-9_-]+)/i)
+  if (hostMatch) data.hostname = hostMatch[1]
+
+  // 端口數
+  const portMatch = t.match(/端口[:\s]*(\d+)/i) || t.match(/ports?[:\s]*(\d+)/i) || t.match(/openPorts[:\s]*(\d+)/i)
+  if (portMatch) data.openPorts = parseInt(portMatch[1])
+
+  // 連線數
+  const connMatch = t.match(/連線[數]?[:\s]*(\d+)/i) || t.match(/connections?[:\s]*(\d+)/i)
+  if (connMatch) data.connections = parseInt(connMatch[1])
+
+  // 可疑項目
+  const suspMatch = t.match(/可疑[項目]*[:\s]*([^\n]+)/i) || t.match(/suspicious[:\s]*([^\n]+)/i)
+  if (suspMatch) {
+    const val = suspMatch[1].trim()
+    if (val && val !== '無' && val !== 'none' && val !== '0') {
+      data.suspicious = val.split(/[,;，；]/).map(s => s.trim()).filter(Boolean)
+    }
+  }
+
+  return data
+}
+
+function startExperts(tokens, groupChatId, onUpdateTeammate) {
   if (groupChatId) chatId = groupChatId
+  if (onUpdateTeammate) updateTeammateCallback = onUpdateTeammate
 
   const tokenMap = {
     chou: tokens[0],
@@ -259,4 +438,4 @@ function getBotInfo() {
   }))
 }
 
-module.exports = { startExperts, stopExperts, isRunning, getBotInfo, sendAsBot, getLog, getChatId, formatMD, BOTS }
+module.exports = { startExperts, stopExperts, isRunning, getBotInfo, sendAsBot, getLog, getChatId, formatMD, BOTS, getWinBotState }

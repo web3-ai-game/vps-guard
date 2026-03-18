@@ -35,8 +35,14 @@ function startAllBots() {
     process.env.BOT_TOKEN_XIAOAI,
   ].filter(Boolean)
   const groupId = process.env.TELEGRAM_CHAT_ID
+  const updateTeammate = (os, data) => {
+    const key = os === 'win' ? 'win' : 'mac'
+    teammates[key].online = true
+    teammates[key].lastSeen = Date.now()
+    teammates[key].data = { ...teammates[key].data, ...data, ts: new Date().toISOString() }
+  }
   if (tokens.length > 0) {
-    experts.startExperts(tokens, groupId)
+    experts.startExperts(tokens, groupId, updateTeammate)
   }
   if (process.env.TELEGRAM_BOT_TOKEN) {
     bot.startBot(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID)
