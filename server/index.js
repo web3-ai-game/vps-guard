@@ -830,6 +830,112 @@ app.post('/api/monitor/ddos-shield', async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ════════════════════════════════════════
+// 全景 VPS 狀態 — /api/vps/panorama
+// ════════════════════════════════════════
+app.get('/api/vps/panorama', async (_req, res) => {
+  try {
+    const [hostnameR, uptimeR, freeR, dfR, loadR, procR, servicesR, dockerR, ufwR, f2bR, ssR, connR, bogR] = await Promise.all([
+      runCmd('hostname', []),
+      runCmd('uptime', ['-p']),
+      runCmd('free', ['-b']),
+      runCmd('df', ['-B1', '/']),
+      runCmd('cat', ['/proc/loadavg']),
+      runCmd('ps', ['aux', '--sort=-%mem']),
+      runCmd('systemctl', ['list-units', '--type=service', '--state=running', '--no-pager', '--plain']),
+      runCmd('docker', ['ps', '--format', '{{.Names}}|{{.Status}}|{{.Ports}}']),
+      runCmd('ufw', ['status', 'verbose']),
+      runCmd('fail2ban-client', ['status']),
+      runCmd('ss', ['-tlnp']),
+      runCmd('ss', ['-tnp', 'state', 'established']),
+      runCmd('ls', ['-la', '/root/BOG/dist/']),
+    ])
+
+    // Memory parse
+    const memLines = freeR.stdout.split('\n')
+    const memParts = memLines[1]?.split(/\s+/) || []
+    const mem = { total: parseInt(memParts[1]) || 0, used: parseInt(memParts[2]) || 0, free: parseInt(memParts[3]) || 0, available: parseInt(memParts[6]) || 0 }
+
+    // Disk parse
+    const dfParts = dfR.stdout.split('\n')[1]?.split(/\s+/) || []
+    const disk = { total: parseInt(dfParts[1]) || 0, used: parseInt(dfParts[2]) || 0, avail: parseInt(dfParts[3]) || 0, pct: dfParts[4] || '0%' }
+
+    // Load avg
+    const loadParts = loadR.stdout.trim().split(/\s+/)
+    const load = { '1m': parseFloat(loadParts[0]) || 0, '5m': parseFloat(loadParts[1]) || 0, '15m': parseFloat(loadParts[2]) || 0 }
+
+    // Top processes
+    const procs = procR.stdout.split('\n').slice(1, 16).map(line => {
+      const p = line.trim().split(/\s+/)
+      return p.length >= 11 ? { user: p[0], pid: p[1], cpu: parseFloat(p[2]) || 0, mem: parseFloat(p[3]) || 0, cmd: p.slice(10).join(' ').slice(0, 60) } : null
+    }).filter(Boolean)
+
+    // Services
+    const svcs = servicesR.stdout.split('\n').filter(l => l.includes('.service')).map(l => {
+      const parts = l.trim().split(/\s+/)
+      return { name: parts[0]?.replace('.service', '') || '', status: parts[2] || '', sub: parts[3] || '' }
+    }).filter(s => s.name)
+
+    // Docker
+    const containers = dockerR.stdout.trim().split('\n').filter(Boolean).map(l => {
+      const [name, status, ports] = l.split('|')
+      return { name, status, ports }
+    }).filter(c => c.name)
+
+    // Firewall
+    const ufwActive = ufwR.stdout.toLowerCase().includes('status: active')
+    const ufwRules = ufwR.stdout.split('\n').filter(l => /^\d+|ALLOW|DENY|REJECT/.test(l.trim())).length
+
+    // Fail2ban
+    const f2bActive = f2bR.ok
+    const f2bJails = parseInt((f2bR.stdout.match(/Number of jail:\s*(\d+)/) || [])[1]) || 0
+
+    // Listen ports
+    const ports = ssR.stdout.split('\n').slice(1).map(l => {
+      const p = l.trim().split(/\s+/)
+      if (p.length < 5) return null
+      const addr = p[3] || ''
+      const portMatch = addr.match(/:(\d+)$/)
+      if (!portMatch) return null
+      const proc = (p.slice(5).join(' ').match(/\("([^"]+)"/) || [])[1] || 'unknown'
+      return { port: portMatch[1], addr, proc, public: addr.startsWith('0.0.0.0:') || addr.startsWith('*:') || addr.startsWith('[::]:') }
+    }).filter(Boolean)
+
+    // Established connections count
+    const connCount = connR.stdout.split('\n').filter(l => l.includes('ESTAB') || l.match(/\d+\.\d+\.\d+\.\d+/)).length
+
+    // BOG project
+    const bogDeployed = bogR.ok && bogR.stdout.includes('index.html')
+
+    // Monitor data
+    const monStatus = monitor.getMonitorStatus()
+    const recentAlerts = monitor.getAlerts(5)
+
+    // Bot status
+    const botInfo = experts.getBotInfo ? experts.getBotInfo() : []
+    const groupList = experts.getGroupList()
+
+    res.json({
+      ts: new Date().toISOString(),
+      hostname: hostnameR.stdout.trim(),
+      uptime: uptimeR.stdout.trim(),
+      system: { mem, disk, load, cpuCores: require('os').cpus().length },
+      processes: procs,
+      services: svcs,
+      containers,
+      security: { ufwActive, ufwRules, f2bActive, f2bJails },
+      network: { ports, connCount },
+      projects: { bog: { deployed: bogDeployed, path: '/root/BOG', nginx: true }, team: { deployed: true, path: '/root/TEAM', port: 3001 } },
+      monitor: monStatus,
+      alerts: recentAlerts,
+      bots: botInfo,
+      groups: groupList,
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 app.get('*', (_req, res) => {
   const index = path.join(__dirname, '..', 'dist', 'index.html')
   if (require('fs').existsSync(index)) res.sendFile(index)

@@ -1,59 +1,32 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-interface Group {
-  id: string
-  name: string
-  type: string
-  messageCount: number
-  lastActivity: string | null
-  isMain: boolean
-}
-
-interface FeedMessage {
-  id: number
-  from: string
-  fromId?: number
-  username?: string
-  text: string
-  ts: string
-  replyTo?: number | null
-  groupId: string
-  groupName: string
-  isMain: boolean
-}
-
-interface BotInfo {
-  key: string
-  name: string
-  role: string
-  desc: string
-  running: boolean
-}
-
-interface Alert {
-  id: number
-  level: string
-  category: string
-  title: string
-  detail: string
-  ts: string
-}
-
-interface MonitorStatus {
-  running: boolean
-  totalAlerts: number
-  recentCritical: number
-  recentHigh: number
-  ddosRisk: string
+/* eslint-disable @typescript-eslint/no-explicit-any */
+interface Group { id: string; name: string; type: string; messageCount: number; lastActivity: string | null; isMain: boolean }
+interface FeedMessage { id: number; from: string; fromId?: number; username?: string; text: string; ts: string; replyTo?: number | null; groupId: string; groupName: string; isMain: boolean }
+interface BotInfo { key: string; name: string; role: string; desc: string; running: boolean }
+interface Alert { id: number; level: string; category: string; title: string; detail: string; ts: string }
+interface MonitorStatus { running: boolean; totalAlerts: number; recentCritical: number; recentHigh: number; ddosRisk: string }
+interface VPano {
+  ts: string; hostname: string; uptime: string
+  system: { mem: { total: number; used: number; available: number }; disk: { total: number; used: number; pct: string }; load: Record<string, number>; cpuCores: number }
+  processes: { user: string; pid: string; cpu: number; mem: number; cmd: string }[]
+  services: { name: string; status: string; sub: string }[]
+  containers: { name: string; status: string; ports: string }[]
+  security: { ufwActive: boolean; ufwRules: number; f2bActive: boolean; f2bJails: number }
+  network: { ports: { port: string; addr: string; proc: string; public: boolean }[]; connCount: number }
+  projects: Record<string, { deployed: boolean; path: string; nginx?: boolean; port?: number }>
+  monitor: MonitorStatus; alerts: Alert[]; bots: BotInfo[]; groups: Group[]
 }
 
 type View = 'feed' | 'group' | 'bots' | 'alerts' | 'vps'
+const fmtBytes = (b: number) => b < 1048576 ? (b/1024).toFixed(0)+'K' : b < 1073741824 ? (b/1048576).toFixed(1)+'M' : (b/1073741824).toFixed(1)+'G'
 
 export default function BotChatPanel() {
   const [view, setView] = useState<View>('feed')
+  const [pano, setPano] = useState<VPano | null>(null)
   const [feed, setFeed] = useState<FeedMessage[]>([])
   const [groups, setGroups] = useState<Group[]>([])
-  const [groupMessages, setGroupMessages] = useState<FeedMessage[]>([])
+  const [groupMessages, setGroupMessages] = useState<any[]>([])
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
   const [bots, setBots] = useState<BotInfo[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
@@ -65,110 +38,71 @@ export default function BotChatPanel() {
   const [replyTarget, setReplyTarget] = useState<FeedMessage | null>(null)
   const msgEndRef = useRef<HTMLDivElement>(null)
 
-  // Unified feed — includes feed + groups + monitor + alerts
+  const fetchPano = useCallback(async () => {
+    try {
+      const r = await fetch('/api/vps/panorama')
+      const d: VPano = await r.json()
+      setPano(d); setMonitorStatus(d.monitor); setAlerts(d.alerts || []); setGroups(d.groups || []); setBots(d.bots || [])
+    } catch {}
+  }, [])
+
   const fetchFeed = useCallback(async () => {
     try {
       const r = await fetch('/api/bot/feed?limit=80')
       const d = await r.json()
-      setFeed(d.feed || [])
-      setGroups(d.groups || [])
-      if (d.monitor) setMonitorStatus(d.monitor)
-      if (d.alerts) setAlerts(d.alerts)
-    } catch {}
-  }, [])
-
-  const fetchBots = useCallback(async () => {
-    try {
-      const r = await fetch('/api/bot/experts')
-      const d = await r.json()
-      setBots(d.bots || [])
+      setFeed(d.feed || []); if (d.groups?.length) setGroups(d.groups)
     } catch {}
   }, [])
 
   const fetchGroupMsgs = useCallback(async () => {
     if (!selectedGroup) return
-    try {
-      const r = await fetch(`/api/bot/messages?groupId=${selectedGroup}&limit=80`)
-      const d = await r.json()
-      setGroupMessages(d.messages || [])
-    } catch {}
+    try { const r = await fetch(`/api/bot/messages?groupId=${selectedGroup}&limit=80`); const d = await r.json(); setGroupMessages(d.messages || []) } catch {}
   }, [selectedGroup])
 
-  const fetchAlerts = useCallback(async () => {
-    try {
-      const r = await fetch('/api/monitor/alerts?limit=30')
-      const d = await r.json()
-      setAlerts(d.alerts || [])
-    } catch {}
+  const fetchAlertsFull = useCallback(async () => {
+    try { const r = await fetch('/api/monitor/alerts?limit=30'); const d = await r.json(); setAlerts(d.alerts || []) } catch {}
   }, [])
 
   useEffect(() => {
-    fetchFeed()
-    fetchBots()
-    const t = setInterval(fetchFeed, 6000)
-    return () => clearInterval(t)
-  }, [fetchFeed, fetchBots])
+    fetchPano(); fetchFeed()
+    const t1 = setInterval(fetchPano, 15000)
+    const t2 = setInterval(fetchFeed, 8000)
+    return () => { clearInterval(t1); clearInterval(t2) }
+  }, [fetchPano, fetchFeed])
 
   useEffect(() => {
-    if (view === 'group' && selectedGroup) {
-      fetchGroupMsgs()
-      const t = setInterval(fetchGroupMsgs, 5000)
-      return () => clearInterval(t)
-    }
+    if (view === 'group' && selectedGroup) { fetchGroupMsgs(); const t = setInterval(fetchGroupMsgs, 5000); return () => clearInterval(t) }
   }, [view, selectedGroup, fetchGroupMsgs])
 
-  useEffect(() => {
-    if (view === 'alerts') fetchAlerts()
-  }, [view, fetchAlerts])
+  useEffect(() => { if (view === 'alerts') fetchAlertsFull() }, [view, fetchAlertsFull])
+  useEffect(() => { msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [feed, groupMessages])
 
-  useEffect(() => {
-    msgEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [feed, groupMessages])
-
-  // Send message to a group via Win Bot
-  const sendToGroup = async (groupId: string) => {
+  const sendToGroup = async (gid: string) => {
     if (!input.trim() || sending) return
     setSending(true)
     try {
-      await fetch('/api/bot/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId, text: input.trim() }),
-      })
-      setInput('')
-      setReplyTarget(null)
-      setTimeout(() => { fetchFeed(); fetchGroupMsgs() }, 1000)
+      await fetch('/api/bot/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ groupId: gid, text: input.trim() }) })
+      setInput(''); setReplyTarget(null); setTimeout(() => { fetchFeed(); fetchGroupMsgs() }, 1000)
     } catch {}
     setSending(false)
   }
 
-  // Chat with any bot
   const chatWithBot = async () => {
     if (!botChatInput.trim() || sending) return
     setSending(true)
     try {
       const ep = selectedBot === 'win' ? '/api/bot/chat' : '/api/bot/chat-any'
-      const body = selectedBot === 'win'
-        ? { message: botChatInput.trim(), user: 'panel' }
-        : { bot: selectedBot, message: botChatInput.trim(), user: 'panel' }
+      const body = selectedBot === 'win' ? { message: botChatInput.trim(), user: 'panel' } : { bot: selectedBot, message: botChatInput.trim(), user: 'panel' }
       await fetch(ep, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       setBotChatInput('')
     } catch {}
     setSending(false)
   }
 
-  // Mac bot send
   const macBotSend = async () => {
     if (!input.trim() || sending) return
     setSending(true)
-    try {
-      await fetch('/api/bot/mac-send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: input.trim() }),
-      })
-      setInput('')
-    } catch {}
+    try { await fetch('/api/bot/mac-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: input.trim() }) }); setInput('') } catch {}
     setSending(false)
   }
 
@@ -179,311 +113,324 @@ export default function BotChatPanel() {
     INFO: 'border-slate-700 bg-slate-900/40 text-slate-400',
   }
 
-  const viewButtons: { id: View; icon: string; label: string }[] = [
-    { id: 'feed', icon: '📡', label: '全量動態' },
-    { id: 'group', icon: '💬', label: '群組' },
-    { id: 'bots', icon: '🤖', label: 'Bot 交互' },
-    { id: 'alerts', icon: '🚨', label: '安全警報' },
-    { id: 'vps', icon: '🛡', label: 'VPS 防禦' },
+  const viewBtns: { id: View; icon: string; label: string }[] = [
+    { id: 'feed', icon: '\ud83d\udce1', label: '\u5168\u666f\u7e3d\u89bd' },
+    { id: 'group', icon: '\ud83d\udcac', label: '\u7fa4\u7d44\u76e3\u63a7' },
+    { id: 'bots', icon: '\ud83e\udd16', label: 'Bot\u4ea4\u4e92' },
+    { id: 'alerts', icon: '\ud83d\udea8', label: '\u5b89\u5168\u8b66\u5831' },
+    { id: 'vps', icon: '\ud83d\udee1', label: 'VPS\u7a3d\u67e5' },
   ]
 
+  const s = pano?.system
+  const memPct = s ? Math.round((s.mem.used / s.mem.total) * 100) : 0
+
   return (
-    <div className="h-full flex flex-col overflow-hidden gap-3">
-      {/* Top bar — view switch + security status */}
-      <div className="shrink-0 flex items-center gap-2">
-        {viewButtons.map(v => (
+    <div className="h-full flex flex-col overflow-hidden gap-2">
+      {/* Top nav */}
+      <div className="shrink-0 flex items-center gap-1.5 flex-wrap">
+        {viewBtns.map(v => (
           <button key={v.id} onClick={() => setView(v.id)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all border ${view === v.id ? 'bg-cyan-950/50 border-cyan-800/60 text-cyan-300' : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-all border ${view === v.id ? 'bg-cyan-950/50 border-cyan-800/60 text-cyan-300' : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
           >{v.icon} {v.label}</button>
         ))}
         <div className="flex-1" />
         {monitorStatus && (
-          <div className="flex items-center gap-3 text-[10px] font-mono">
+          <div className="flex items-center gap-2 text-[9px] font-mono">
             <span className={`flex items-center gap-1 ${monitorStatus.running ? 'text-emerald-400' : 'text-red-400'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${monitorStatus.running ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'}`} />
-              監控
+              <span className={`w-1.5 h-1.5 rounded-full ${monitorStatus.running ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'}`} /> \u76e3\u63a7
             </span>
             <span className={monitorStatus.ddosRisk === 'HIGH' ? 'text-red-400' : monitorStatus.ddosRisk === 'MEDIUM' ? 'text-yellow-400' : 'text-slate-500'}>
-              DDoS: {monitorStatus.ddosRisk}
+              DDoS:{monitorStatus.ddosRisk}
             </span>
-            <span className="text-slate-600">警報: {monitorStatus.totalAlerts}</span>
+            {monitorStatus.totalAlerts > 0 && <span className="text-orange-400">\u8b66\u5831:{monitorStatus.totalAlerts}</span>}
           </div>
         )}
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex gap-3 min-h-0 overflow-hidden">
-
-        {/* ═══ FEED VIEW — 默認全量動態 ═══ */}
+      <div className="flex-1 flex gap-2 min-h-0 overflow-hidden">
+        {/* FEED / PANORAMA */}
         {view === 'feed' && (
-          <>
-            {/* Sidebar: group list */}
-            <div className="w-56 shrink-0 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden">
-              <div className="px-3 py-2 border-b border-slate-800 text-[10px] text-slate-500 font-medium">監控群組</div>
-              <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
-                {groups.length === 0 ? (
-                  <div className="text-center py-6 text-[10px] text-slate-600">等待 Win Bot 收到群組訊息...</div>
-                ) : groups.map(g => (
-                  <button key={g.id} onClick={() => { setSelectedGroup(g.id); setView('group') }}
-                    className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-slate-800/50 text-slate-400 transition-all"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs">{g.isMain ? '⭐' : '💬'}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[10px] font-medium truncate">{g.name}</div>
-                        <div className="text-[8px] text-slate-600">{g.messageCount} 條 {g.isMain ? '· OECE 主群 (摘要)' : '· 全量監控'}</div>
-                      </div>
+          <div className="flex-1 flex flex-col overflow-hidden gap-2">
+            {pano && s && (
+              <div className="shrink-0 space-y-2">
+                <div className="grid grid-cols-6 gap-2">
+                  <Stat label="\u4e3b\u6a5f" val={pano.hostname} />
+                  <Stat label="\u904b\u884c" val={pano.uptime.replace('up ', '')} />
+                  <Stat label="CPU" val={`${(s.load['1m'] || 0).toFixed(1)}/${s.cpuCores}\u6838`} c={(s.load['1m'] || 0) > s.cpuCores ? 'text-red-400' : (s.load['1m'] || 0) > s.cpuCores * 0.7 ? 'text-yellow-400' : 'text-emerald-400'} />
+                  <Stat label="\u8a18\u61b6\u9ad4" val={`${memPct}% ${fmtBytes(s.mem.used)}`} c={memPct > 85 ? 'text-red-400' : memPct > 60 ? 'text-yellow-400' : 'text-emerald-400'} />
+                  <Stat label="\u78c1\u789f" val={s.disk.pct} c={parseInt(s.disk.pct) > 80 ? 'text-red-400' : 'text-emerald-400'} />
+                  <Stat label="\u9023\u7dda" val={String(pano.network.connCount)} c={pano.network.connCount > 50 ? 'text-orange-400' : 'text-slate-300'} />
+                </div>
+                <div className="grid grid-cols-6 gap-2">
+                  <Stat label="UFW" val={pano.security.ufwActive ? 'ON' : 'OFF'} c={pano.security.ufwActive ? 'text-emerald-400' : 'text-red-400'} />
+                  <Stat label="Fail2Ban" val={pano.security.f2bActive ? `ON(${pano.security.f2bJails})` : 'OFF'} c={pano.security.f2bActive ? 'text-emerald-400' : 'text-red-400'} />
+                  <Stat label="\u516c\u958b\u7aef\u53e3" val={String(pano.network.ports.filter(p => p.public).length)} c={pano.network.ports.filter(p => p.public).length > 3 ? 'text-orange-400' : 'text-slate-300'} />
+                  <Stat label="BOG" val={pano.projects.bog?.deployed ? 'LIVE' : 'DOWN'} c={pano.projects.bog?.deployed ? 'text-emerald-400' : 'text-red-400'} />
+                  <Stat label="\u7fa4\u7d44" val={String(pano.groups.length)} />
+                  <Stat label="Bot" val={`${pano.bots.filter(b => b.running).length}/${pano.bots.length}`} c={pano.bots.every(b => b.running) ? 'text-emerald-400' : 'text-orange-400'} />
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1 rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-1.5">
+                    <div className="text-[7px] text-slate-600 mb-1">\u670d\u52d9 ({pano.services.length})</div>
+                    <div className="flex flex-wrap gap-1">
+                      {pano.services.slice(0, 20).map(sv => (
+                        <span key={sv.name} className="text-[7px] px-1 py-0.5 rounded bg-slate-800/60 text-slate-400">{sv.name}</span>
+                      ))}
                     </div>
-                  </button>
-                ))}
+                  </div>
+                  <div className="w-48 shrink-0 rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-1.5">
+                    <div className="text-[7px] text-slate-600 mb-1">\u516c\u958b\u7aef\u53e3</div>
+                    <div className="flex flex-wrap gap-1">
+                      {pano.network.ports.filter(p => p.public).map(p => (
+                        <span key={p.port} className="text-[7px] px-1 py-0.5 rounded bg-orange-950/30 border border-orange-900/30 text-orange-400">{p.port}/{p.proc}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-              {/* Quick alerts */}
-              {alerts.length > 0 && (
-                <div className="border-t border-slate-800 p-1.5 space-y-1 max-h-36 overflow-y-auto">
-                  <div className="text-[9px] text-slate-600 px-1">最近警報</div>
-                  {alerts.slice(0, 3).map(a => (
-                    <div key={a.id} className={`px-2 py-1 rounded text-[9px] border ${AC[a.level] || ''}`}>
-                      <span className="font-medium">{a.title}</span>
+            )}
+            {!pano && <div className="text-center py-8 text-[9px] text-slate-600">\u8f09\u5165 VPS \u5168\u666f\u8cc7\u6599...</div>}
+
+            {/* Feed + alerts row */}
+            <div className="flex-1 flex gap-2 min-h-0 overflow-hidden">
+              {/* Feed */}
+              <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/20 overflow-hidden">
+                <div className="shrink-0 px-3 py-1.5 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
+                  <span className="text-[9px] font-medium text-slate-400">\u5168\u91cf\u52d5\u614b\u6d41</span>
+                  <span className="text-[7px] text-slate-600">OECE\u53bb\u91cd\u00b7\u5176\u4ed6\u7fa4\u5168\u91cf</span>
+                  <div className="flex-1" />
+                  <button onClick={fetchFeed} className="text-[7px] px-1.5 py-0.5 border border-slate-700 rounded text-slate-600 hover:text-cyan-400">\u5237\u65b0</button>
+                </div>
+                <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
+                  {feed.length === 0 ? (
+                    <div className="text-center py-4 text-[8px] text-slate-600">Bot\u7fa4\u7d44\u8a0a\u606f\u5c07\u5373\u6642\u986f\u793a<br />Win Bot \u76e3\u63a7\u4e2d...</div>
+                  ) : feed.map((m, i) => (
+                    <div key={`${m.groupId}-${m.id}-${i}`} className="flex gap-1 group">
+                      <div className={`flex-1 rounded-lg px-2 py-1.5 border ${m.isMain ? 'bg-amber-950/20 border-amber-900/30' : 'bg-slate-800/40 border-slate-700/30'}`}>
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className={`text-[7px] px-1 py-0.5 rounded ${m.isMain ? 'bg-amber-900/40 text-amber-400' : 'bg-cyan-900/30 text-cyan-400'}`}>{m.groupName}</span>
+                          <span className="text-[8px] font-medium text-slate-300">{m.from}</span>
+                          <div className="flex-1" />
+                          <span className="text-[6px] text-slate-700">{new Date(m.ts).toLocaleTimeString('zh-TW')}</span>
+                        </div>
+                        <div className="text-[9px] text-slate-300 whitespace-pre-wrap break-words line-clamp-3">{m.text}</div>
+                      </div>
+                      {!m.isMain && (
+                        <button onClick={() => { setReplyTarget(m); setSelectedGroup(m.groupId) }}
+                          className="opacity-0 group-hover:opacity-100 self-center text-[7px] px-1 py-0.5 border border-slate-700 rounded text-slate-600 hover:text-cyan-400 shrink-0"
+                        >\u21a9</button>
+                      )}
                     </div>
                   ))}
+                  <div ref={msgEndRef} />
                 </div>
-              )}
-            </div>
-
-            {/* Feed messages */}
-            <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/20 overflow-hidden">
-              <div className="shrink-0 px-4 py-2.5 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
-                <span className="text-sm">📡</span>
-                <span className="text-xs font-medium text-slate-300">全量動態流</span>
-                <span className="text-[9px] text-slate-600">— OECE 去重摘要 · 其他群全量</span>
-                <div className="flex-1" />
-                <button onClick={fetchFeed} className="text-[9px] px-2 py-0.5 border border-slate-700 rounded text-slate-500 hover:text-cyan-400 transition-all">🔄</button>
-              </div>
-              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
-                {feed.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-600">
-                    <span className="text-4xl">📡</span>
-                    <span className="text-xs">等待 Win Bot 接收群組訊息...</span>
-                    <span className="text-[10px] text-slate-700">Bot 加入群組後自動開始監控</span>
-                  </div>
-                ) : feed.map((m, i) => (
-                  <div key={`${m.groupId}-${m.id}-${i}`} className="flex gap-2 group">
-                    <div className={`flex-1 rounded-lg px-3 py-2 border ${m.isMain ? 'bg-amber-950/20 border-amber-900/30' : 'bg-slate-800/40 border-slate-700/30'}`}>
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded ${m.isMain ? 'bg-amber-900/40 text-amber-400' : 'bg-cyan-900/30 text-cyan-400'}`}>{m.groupName}</span>
-                        <span className="text-[10px] font-medium text-slate-300">{m.from}</span>
-                        {m.username && <span className="text-[9px] text-slate-600">@{m.username}</span>}
-                        <div className="flex-1" />
-                        <span className="text-[8px] text-slate-700">{new Date(m.ts).toLocaleTimeString('zh-TW')}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-300 whitespace-pre-wrap break-words line-clamp-4">{m.text}</div>
+                {/* Reply bar */}
+                <div className="shrink-0 px-3 py-2 border-t border-slate-800 bg-slate-900/40">
+                  {replyTarget && (
+                    <div className="flex items-center gap-1 mb-1.5 px-2 py-1 rounded bg-slate-800/50 text-[7px]">
+                      <span className="text-cyan-400">\u21a9[{replyTarget.groupName}]{replyTarget.from}</span>
+                      <span className="text-slate-600 truncate flex-1">{replyTarget.text?.slice(0, 30)}</span>
+                      <button onClick={() => setReplyTarget(null)} className="text-slate-500 hover:text-red-400">\u2715</button>
                     </div>
-                    {/* Quick reply button for non-main groups */}
-                    {!m.isMain && (
-                      <button
-                        onClick={() => { setReplyTarget(m); setSelectedGroup(m.groupId) }}
-                        className="opacity-0 group-hover:opacity-100 self-center text-[9px] px-2 py-1 border border-slate-700 rounded text-slate-500 hover:text-cyan-400 hover:border-cyan-700 transition-all shrink-0"
-                      >↩ 回覆</button>
-                    )}
+                  )}
+                  <div className="flex gap-1.5">
+                    <select value={selectedGroup || ''} onChange={e => setSelectedGroup(e.target.value || null)}
+                      className="bg-slate-800/60 border border-slate-700 rounded-lg px-1.5 py-1.5 text-[8px] text-slate-400 w-24 shrink-0"
+                    ><option value="">\u76ee\u6a19\u7fa4</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select>
+                    <input value={input} onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && selectedGroup) sendToGroup(selectedGroup) }}
+                      placeholder="Bot\u4ee3\u767c..."
+                      className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-2 py-1.5 text-[9px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-cyan-700"
+                    />
+                    <button onClick={() => { if (selectedGroup) sendToGroup(selectedGroup) }} disabled={sending || !input.trim() || !selectedGroup}
+                      className="px-2 py-1.5 rounded-lg text-[8px] bg-cyan-950/50 border border-cyan-800/60 text-cyan-400 disabled:opacity-30"
+                    >SD</button>
+                    <button onClick={macBotSend} disabled={sending || !input.trim()}
+                      className="px-2 py-1.5 rounded-lg text-[8px] bg-emerald-950/50 border border-emerald-800/60 text-emerald-400 disabled:opacity-30"
+                    >Chou</button>
                   </div>
-                ))}
-                <div ref={msgEndRef} />
+                </div>
               </div>
 
-              {/* Reply bar */}
-              <div className="shrink-0 px-4 py-2.5 border-t border-slate-800 bg-slate-900/40">
-                {replyTarget && (
-                  <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-slate-800/50 border border-slate-700/50 text-[9px]">
-                    <span className="text-cyan-400">↩ 回覆 [{replyTarget.groupName}] {replyTarget.from}</span>
-                    <span className="text-slate-600 truncate flex-1">{replyTarget.text?.slice(0, 40)}</span>
-                    <button onClick={() => setReplyTarget(null)} className="text-slate-500 hover:text-red-400">✕</button>
+              {/* Right column */}
+              <div className="w-56 shrink-0 flex flex-col gap-2 overflow-hidden">
+                <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden min-h-0">
+                  <div className="shrink-0 px-2 py-1.5 border-b border-slate-800 text-[8px] text-slate-500 font-medium flex items-center gap-1">
+                    \ud83d\udea8 \u8b66\u5831
+                    {alerts.length > 0 && <span className="px-1 rounded bg-red-950/50 text-red-400">{alerts.length}</span>}
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-1 space-y-1">
+                    {alerts.length === 0
+                      ? <div className="text-center py-3 text-[7px] text-slate-600">\u66ab\u7121</div>
+                      : alerts.map(a => (
+                        <div key={a.id} className={`px-2 py-1 rounded border text-[7px] ${AC[a.level] || ''}`}>
+                          <div className="font-medium">{a.title}</div>
+                          <div className="opacity-60 line-clamp-2">{a.detail}</div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                </div>
+                {pano && (
+                  <div className="h-32 shrink-0 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden">
+                    <div className="px-2 py-1.5 border-b border-slate-800 text-[8px] text-slate-500 font-medium">Top\u9032\u7a0b</div>
+                    <div className="flex-1 overflow-y-auto p-1 text-[7px] font-mono">
+                      {pano.processes.slice(0, 8).map((p, i) => (
+                        <div key={i} className="flex gap-1.5 px-1 py-0.5 hover:bg-slate-800/30 rounded">
+                          <span className="w-7 text-right text-slate-600">{p.mem.toFixed(1)}%</span>
+                          <span className="w-7 text-right text-cyan-500">{p.cpu.toFixed(1)}%</span>
+                          <span className="text-slate-400 truncate flex-1">{p.cmd}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
-                <div className="flex gap-2">
-                  <select
-                    value={selectedGroup || ''}
-                    onChange={e => setSelectedGroup(e.target.value || null)}
-                    className="bg-slate-800/60 border border-slate-700 rounded-lg px-2 py-2 text-[10px] text-slate-400 focus:outline-none w-36 shrink-0"
-                  >
-                    <option value="">選擇目標群組</option>
-                    {groups.map(g => <option key={g.id} value={g.id}>{g.name} {g.isMain ? '(主群)' : ''}</option>)}
-                  </select>
-                  <input value={input} onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && selectedGroup && sendToGroup(selectedGroup)}
-                    placeholder="透過 Bot 發送訊息..."
-                    className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-cyan-700 transition-colors"
-                  />
-                  <button onClick={() => selectedGroup && sendToGroup(selectedGroup)} disabled={sending || !input.trim() || !selectedGroup}
-                    className="px-3 py-2 rounded-lg text-[10px] font-medium bg-cyan-950/50 border border-cyan-800/60 text-cyan-400 hover:bg-cyan-900/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                  >SD 發送</button>
-                  <button onClick={macBotSend} disabled={sending || !input.trim()}
-                    className="px-3 py-2 rounded-lg text-[10px] font-medium bg-emerald-950/50 border border-emerald-800/60 text-emerald-400 hover:bg-emerald-900/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                  >Chou 發送</button>
-                </div>
               </div>
             </div>
-          </>
+          </div>
         )}
 
-        {/* ═══ GROUP VIEW — 單群組全量 ═══ */}
+        {/* GROUP VIEW */}
         {view === 'group' && (
           <>
-            <div className="w-56 shrink-0 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden">
-              <div className="px-3 py-2 border-b border-slate-800 text-[10px] text-slate-500 font-medium">群組列表</div>
-              <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
-                {groups.map(g => (
-                  <button key={g.id} onClick={() => setSelectedGroup(g.id)}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg transition-all ${selectedGroup === g.id ? 'bg-cyan-950/50 border border-cyan-800/60 text-cyan-300' : 'hover:bg-slate-800/50 text-slate-400 border border-transparent'}`}
-                  >
-                    <div className="text-[10px] font-medium truncate">{g.isMain ? '⭐ ' : '💬 '}{g.name}</div>
-                    <div className="text-[8px] text-slate-600">{g.messageCount} 條</div>
-                  </button>
-                ))}
+            <div className="w-44 shrink-0 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden">
+              <div className="px-2 py-1.5 border-b border-slate-800 text-[8px] text-slate-500 font-medium">\u7fa4\u7d44</div>
+              <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
+                {groups.length === 0
+                  ? <div className="text-center py-4 text-[7px] text-slate-600">\u7b49\u5f85...</div>
+                  : groups.map(g => (
+                    <button key={g.id} onClick={() => setSelectedGroup(g.id)}
+                      className={`w-full text-left px-2 py-1.5 rounded-lg text-[8px] ${selectedGroup === g.id ? 'bg-cyan-950/50 border border-cyan-800/60 text-cyan-300' : 'hover:bg-slate-800/50 text-slate-400 border border-transparent'}`}
+                    >{g.isMain ? '\u2b50 ' : '\ud83d\udcac '}{g.name} <span className="text-[6px] text-slate-600">({g.messageCount})</span></button>
+                  ))
+                }
               </div>
             </div>
             <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/20 overflow-hidden">
-              <div className="shrink-0 px-4 py-2.5 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
-                <span className="text-sm">💬</span>
-                <span className="text-xs font-medium text-slate-300">{groups.find(g => g.id === selectedGroup)?.name || '選擇群組'}</span>
-                {selectedGroup && groups.find(g => g.id === selectedGroup)?.isMain && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400">OECE 主群</span>
-                )}
+              <div className="shrink-0 px-3 py-2 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
+                <span className="text-[9px] font-medium text-slate-300">{groups.find(g => g.id === selectedGroup)?.name || '\u9078\u64c7\u7fa4\u7d44'}</span>
+                {selectedGroup && groups.find(g => g.id === selectedGroup)?.isMain && <span className="text-[7px] px-1 py-0.5 rounded bg-amber-900/30 text-amber-400">OECE</span>}
               </div>
-              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
-                {!selectedGroup ? (
-                  <div className="text-center py-12 text-[10px] text-slate-600">← 選擇群組</div>
-                ) : groupMessages.length === 0 ? (
-                  <div className="text-center py-12 text-[10px] text-slate-600">此群暫無訊息</div>
-                ) : groupMessages.map((m, i) => (
-                  <div key={`${m.id}-${i}`} className={`flex gap-2 ${m.from === 'SD (面板)' ? 'flex-row-reverse' : ''}`}>
-                    <div className={`max-w-[80%] rounded-lg px-3 py-2 ${m.from === 'SD (面板)' ? 'bg-cyan-950/40 border border-cyan-800/40' : 'bg-slate-800/50 border border-slate-700/30'}`}>
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-[10px] font-medium text-cyan-400">{m.from}</span>
-                        <span className="text-[8px] text-slate-700">{new Date(m.ts).toLocaleTimeString('zh-TW')}</span>
+              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
+                {!selectedGroup ? <div className="text-center py-6 text-[8px] text-slate-600">\u2190 \u9078\u64c7\u7fa4\u7d44</div>
+                  : groupMessages.length === 0 ? <div className="text-center py-6 text-[8px] text-slate-600">\u66ab\u7121\u8a0a\u606f</div>
+                  : groupMessages.map((m: any, i: number) => (
+                    <div key={`gm-${m.id}-${i}`} className={`flex gap-1.5 ${m.from === 'SD (\u9762\u677f)' ? 'flex-row-reverse' : ''}`}>
+                      <div className={`max-w-[80%] rounded-lg px-2.5 py-1.5 ${m.from === 'SD (\u9762\u677f)' ? 'bg-cyan-950/40 border border-cyan-800/40' : 'bg-slate-800/50 border border-slate-700/30'}`}>
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="text-[8px] font-medium text-cyan-400">{m.from}</span>
+                          <span className="text-[6px] text-slate-700">{new Date(m.ts).toLocaleTimeString('zh-TW')}</span>
+                        </div>
+                        <div className="text-[9px] text-slate-300 whitespace-pre-wrap break-words">{m.text}</div>
                       </div>
-                      <div className="text-[11px] text-slate-300 whitespace-pre-wrap break-words">{m.text}</div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                }
                 <div ref={msgEndRef} />
               </div>
               {selectedGroup && (
-                <div className="shrink-0 px-4 py-2.5 border-t border-slate-800 bg-slate-900/40">
-                  <div className="flex gap-2">
-                    <input value={input} onChange={e => setInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && sendToGroup(selectedGroup)}
-                      placeholder="透過 SD Bot 發送到此群..."
-                      className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-cyan-700"
-                    />
-                    <button onClick={() => sendToGroup(selectedGroup)} disabled={sending || !input.trim()}
-                      className="px-3 py-2 rounded-lg text-[10px] font-medium bg-cyan-950/50 border border-cyan-800/60 text-cyan-400 disabled:opacity-30 transition-all"
-                    >📤 發送</button>
-                  </div>
+                <div className="shrink-0 px-3 py-2 border-t border-slate-800 bg-slate-900/40 flex gap-1.5">
+                  <input value={input} onChange={e => setInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') sendToGroup(selectedGroup) }}
+                    placeholder="SD Bot \u4ee3\u767c..."
+                    className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-2 py-1.5 text-[9px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-cyan-700"
+                  />
+                  <button onClick={() => sendToGroup(selectedGroup)} disabled={sending || !input.trim()}
+                    className="px-2 py-1.5 rounded-lg text-[8px] bg-cyan-950/50 border border-cyan-800/60 text-cyan-400 disabled:opacity-30"
+                  >\u767c\u9001</button>
                 </div>
               )}
             </div>
           </>
         )}
 
-        {/* ═══ BOTS VIEW — Bot 交互 ═══ */}
+        {/* BOTS VIEW */}
         {view === 'bots' && (
           <>
-            <div className="w-56 shrink-0 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden">
-              <div className="px-3 py-2 border-b border-slate-800 text-[10px] text-slate-500 font-medium">Bot 列表</div>
-              <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
+            <div className="w-44 shrink-0 flex flex-col border border-slate-800 rounded-xl bg-slate-900/30 overflow-hidden">
+              <div className="px-2 py-1.5 border-b border-slate-800 text-[8px] text-slate-500 font-medium">Bot</div>
+              <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
                 {bots.map(b => (
                   <button key={b.key} onClick={() => setSelectedBot(b.key)}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg transition-all ${selectedBot === b.key ? 'bg-violet-950/50 border border-violet-800/60 text-violet-300' : 'hover:bg-slate-800/50 text-slate-400 border border-transparent'}`}
+                    className={`w-full text-left px-2 py-1.5 rounded-lg text-[8px] flex items-center gap-1.5 ${selectedBot === b.key ? 'bg-violet-950/50 border border-violet-800/60 text-violet-300' : 'hover:bg-slate-800/50 text-slate-400 border border-transparent'}`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${b.running ? 'bg-emerald-400' : 'bg-slate-700'}`} />
-                      <div>
-                        <div className="text-[10px] font-medium">{b.name}</div>
-                        <div className="text-[8px] text-slate-600 truncate">{b.desc}</div>
-                      </div>
-                    </div>
+                    <span className={`w-1.5 h-1.5 rounded-full ${b.running ? 'bg-emerald-400' : 'bg-slate-700'}`} />
+                    <div><div>{b.name}</div><div className="text-[6px] text-slate-600 truncate">{b.desc}</div></div>
                   </button>
                 ))}
               </div>
-              <div className="border-t border-slate-800 p-2 text-[9px] text-slate-600">
-                <div>Mac Bot: Mr`Chou 助理</div>
-                <div>Win Bot: SD (面板代理)</div>
-              </div>
+              <div className="border-t border-slate-800 p-1.5 text-[7px] text-slate-600">Mac:Chou \u00b7 Win:SD</div>
             </div>
             <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/20 overflow-hidden">
-              <div className="shrink-0 px-4 py-2.5 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
-                <span className="text-sm">🤖</span>
-                <span className="text-xs font-medium text-slate-300">{bots.find(b => b.key === selectedBot)?.name || selectedBot}</span>
-                <span className="text-[9px] text-slate-600">{bots.find(b => b.key === selectedBot)?.desc || ''}</span>
+              <div className="shrink-0 px-3 py-2 border-b border-slate-800 bg-slate-900/40 text-[9px] text-slate-300 font-medium">
+                {bots.find(b => b.key === selectedBot)?.name || selectedBot}
+                <span className="text-[7px] text-slate-600 ml-1">{bots.find(b => b.key === selectedBot)?.desc}</span>
               </div>
               <BotChatMessages botKey={selectedBot} />
-              <div className="shrink-0 px-4 py-2.5 border-t border-slate-800 bg-slate-900/40">
-                <div className="flex gap-2">
-                  <input value={botChatInput} onChange={e => setBotChatInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && chatWithBot()}
-                    placeholder={`與 ${bots.find(b => b.key === selectedBot)?.name || 'Bot'} 對話...`}
-                    className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-violet-700"
-                  />
-                  <button onClick={chatWithBot} disabled={sending || !botChatInput.trim()}
-                    className="px-3 py-2 rounded-lg text-[10px] font-medium bg-violet-950/50 border border-violet-800/60 text-violet-400 disabled:opacity-30 transition-all"
-                  >發送</button>
-                </div>
+              <div className="shrink-0 px-3 py-2 border-t border-slate-800 bg-slate-900/40 flex gap-1.5">
+                <input value={botChatInput} onChange={e => setBotChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') chatWithBot() }}
+                  placeholder={`\u8207${bots.find(b => b.key === selectedBot)?.name || 'Bot'}\u5c0d\u8a71...`}
+                  className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-2 py-1.5 text-[9px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-violet-700"
+                />
+                <button onClick={chatWithBot} disabled={sending || !botChatInput.trim()}
+                  className="px-2 py-1.5 rounded-lg text-[8px] bg-violet-950/50 border border-violet-800/60 text-violet-400 disabled:opacity-30"
+                >\u767c\u9001</button>
               </div>
             </div>
           </>
         )}
 
-        {/* ═══ ALERTS VIEW ═══ */}
+        {/* ALERTS VIEW */}
         {view === 'alerts' && (
           <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/20 overflow-hidden">
-            <div className="shrink-0 px-4 py-2.5 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
-              <span className="text-sm">🚨</span>
-              <span className="text-xs font-medium text-slate-300">安全監控中心</span>
-              <span className="text-[9px] text-slate-600">SSH·Nginx·Fail2Ban·DDoS 全量 TG 播報</span>
+            <div className="shrink-0 px-3 py-2 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
+              <span className="text-[9px] font-medium text-slate-300">\u5b89\u5168\u76e3\u63a7\u4e2d\u5fc3</span>
+              <span className="text-[7px] text-slate-600">SSH\u00b7Nginx\u00b7F2B\u00b7DDoS\u00b7TG\u64ad\u5831</span>
               <div className="flex-1" />
               {monitorStatus?.ddosRisk === 'HIGH' && (
-                <button onClick={() => fetch('/api/monitor/ddos-shield', { method: 'POST' }).then(fetchAlerts)}
-                  className="px-2 py-1 rounded text-[9px] bg-red-950/50 border border-red-800/60 text-red-400 animate-pulse"
-                >🛡 啟用 DO 雲盾</button>
+                <button onClick={() => fetch('/api/monitor/ddos-shield', { method: 'POST' }).then(fetchAlertsFull)}
+                  className="px-2 py-1 rounded text-[7px] bg-red-950/50 border border-red-800/60 text-red-400 animate-pulse"
+                >\ud83d\udee1 DO\u96f2\u76fe</button>
               )}
-              <button onClick={fetchAlerts} className="text-[9px] px-2 py-0.5 border border-slate-700 rounded text-slate-500 hover:text-cyan-400 transition-all">🔄</button>
+              <button onClick={fetchAlertsFull} className="text-[7px] px-1.5 py-0.5 border border-slate-700 rounded text-slate-600 hover:text-cyan-400">\ud83d\udd04</button>
             </div>
             {monitorStatus && (
-              <div className="shrink-0 grid grid-cols-4 gap-2 px-4 py-2 border-b border-slate-800">
-                <StatMini label="總警報" value={String(monitorStatus.totalAlerts)} />
-                <StatMini label="嚴重" value={String(monitorStatus.recentCritical)} color={monitorStatus.recentCritical > 0 ? 'text-red-400' : undefined} />
-                <StatMini label="高危" value={String(monitorStatus.recentHigh)} color={monitorStatus.recentHigh > 0 ? 'text-orange-400' : undefined} />
-                <StatMini label="DDoS" value={monitorStatus.ddosRisk} color={monitorStatus.ddosRisk === 'HIGH' ? 'text-red-400' : monitorStatus.ddosRisk === 'MEDIUM' ? 'text-yellow-400' : 'text-emerald-400'} />
+              <div className="shrink-0 grid grid-cols-4 gap-2 px-3 py-2 border-b border-slate-800">
+                <Stat label="\u7e3d\u8b66\u5831" val={String(monitorStatus.totalAlerts)} />
+                <Stat label="\u56b4\u91cd" val={String(monitorStatus.recentCritical)} c={monitorStatus.recentCritical > 0 ? 'text-red-400' : undefined} />
+                <Stat label="\u9ad8\u5371" val={String(monitorStatus.recentHigh)} c={monitorStatus.recentHigh > 0 ? 'text-orange-400' : undefined} />
+                <Stat label="DDoS" val={monitorStatus.ddosRisk} c={monitorStatus.ddosRisk === 'HIGH' ? 'text-red-400' : monitorStatus.ddosRisk === 'MEDIUM' ? 'text-yellow-400' : 'text-emerald-400'} />
               </div>
             )}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
               {alerts.map(a => (
-                <div key={a.id} className={`rounded-xl border px-3 py-2.5 ${AC[a.level] || ''}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[9px] font-mono opacity-70">[{a.category}]</span>
-                    <span className="text-[11px] font-medium">{a.title}</span>
+                <div key={a.id} className={`rounded-lg border px-2.5 py-2 ${AC[a.level] || ''}`}>
+                  <div className="flex items-center gap-1 mb-0.5">
+                    <span className="text-[7px] font-mono opacity-70">[{a.category}]</span>
+                    <span className="text-[9px] font-medium">{a.title}</span>
                     <div className="flex-1" />
-                    <span className="text-[8px] text-slate-600">{new Date(a.ts).toLocaleString('zh-TW')}</span>
+                    <span className="text-[6px] text-slate-600">{new Date(a.ts).toLocaleString('zh-TW')}</span>
                   </div>
-                  <p className="text-[10px] opacity-70 whitespace-pre-wrap">{a.detail}</p>
+                  <p className="text-[8px] opacity-70 whitespace-pre-wrap">{a.detail}</p>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* ═══ VPS VIEW — VPS 防禦 + 稽查 ═══ */}
-        {view === 'vps' && <VPSDefensePanel />}
+        {/* VPS AUDIT VIEW */}
+        {view === 'vps' && <VPSAuditPanel />}
       </div>
     </div>
   )
 }
 
-function StatMini({ label, value, color }: { label: string; value: string; color?: string }) {
+function Stat({ label, val, c }: { label: string; val: string; c?: string }) {
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-lg px-2 py-1.5 text-center">
-      <div className="text-[8px] text-slate-600">{label}</div>
-      <div className={`text-xs font-mono font-bold ${color || 'text-slate-300'}`}>{value}</div>
+      <div className="text-[7px] text-slate-600">{label}</div>
+      <div className={`text-[9px] font-mono font-bold ${c || 'text-slate-300'}`}>{val}</div>
     </div>
   )
 }
@@ -493,32 +440,28 @@ function BotChatMessages({ botKey }: { botKey: string }) {
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const f = async () => {
-      try { const r = await fetch('/api/bot/chat'); const d = await r.json(); setQueue(d.queue || []) } catch {}
-    }
-    f()
-    const t = setInterval(f, 4000)
-    return () => clearInterval(t)
+    const f = async () => { try { const r = await fetch('/api/bot/chat'); const d = await r.json(); setQueue(d.queue || []) } catch {} }
+    f(); const t = setInterval(f, 4000); return () => clearInterval(t)
   }, [botKey])
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [queue])
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+    <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
       {queue.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-600">
-          <span className="text-3xl">🤖</span>
-          <span className="text-xs">輸入命令與 Bot 交互</span>
-          <span className="text-[10px] text-slate-700">/help · /forward · /sd · /winstatus</span>
+        <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-600">
+          <span className="text-2xl">\ud83e\udd16</span>
+          <span className="text-[8px]">\u8f38\u5165\u547d\u4ee4\u8207Bot\u4ea4\u4e92</span>
+          <span className="text-[7px] text-slate-700">/help\u00b7/forward\u00b7/sd\u00b7/winstatus</span>
         </div>
       ) : queue.map(m => (
-        <div key={m.id} className={`flex gap-2 ${m.direction === 'in' ? '' : 'flex-row-reverse'}`}>
-          <div className={`max-w-[75%] rounded-lg px-3 py-2 ${m.direction === 'out' ? 'bg-violet-950/40 border border-violet-800/40' : 'bg-slate-800/60 border border-slate-700/40'}`}>
-            <div className="flex items-center gap-2 mb-0.5">
-              <span className={`text-[10px] font-medium ${m.direction === 'out' ? 'text-violet-400' : 'text-cyan-400'}`}>{m.from}</span>
-              <span className="text-[8px] text-slate-700">{new Date(m.ts).toLocaleTimeString('zh-TW')}</span>
+        <div key={m.id} className={`flex gap-1.5 ${m.direction === 'in' ? '' : 'flex-row-reverse'}`}>
+          <div className={`max-w-[75%] rounded-lg px-2.5 py-1.5 ${m.direction === 'out' ? 'bg-violet-950/40 border border-violet-800/40' : 'bg-slate-800/60 border border-slate-700/40'}`}>
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className={`text-[8px] font-medium ${m.direction === 'out' ? 'text-violet-400' : 'text-cyan-400'}`}>{m.from}</span>
+              <span className="text-[6px] text-slate-700">{new Date(m.ts).toLocaleTimeString('zh-TW')}</span>
             </div>
-            <div className="text-[11px] text-slate-300 whitespace-pre-wrap break-words">{m.text}</div>
+            <div className="text-[9px] text-slate-300 whitespace-pre-wrap break-words">{m.text}</div>
           </div>
         </div>
       ))}
@@ -527,67 +470,56 @@ function BotChatMessages({ botKey }: { botKey: string }) {
   )
 }
 
-function VPSDefensePanel() {
-  const [audit, setAudit] = useState<Record<string, unknown> | null>(null)
+function VPSAuditPanel() {
+  const [audit, setAudit] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const run = async () => { setLoading(true); try { const r = await fetch('/api/audit'); setAudit(await r.json()) } catch {}; setLoading(false) }
+  useEffect(() => { run() }, [])
 
-  const runAudit = async () => {
-    setLoading(true)
-    try { const r = await fetch('/api/audit'); setAudit(await r.json()) } catch {}
-    setLoading(false)
-  }
-
-  useEffect(() => { runAudit() }, [])
-
-  const a = audit as Record<string, unknown> | null
-  const sec = (a?.security || {}) as Record<string, unknown>
-  const net = (a?.network || {}) as Record<string, unknown>
-  const ports = (a?.listenPorts || []) as Array<Record<string, unknown>>
-  const findings = (a?.findings || []) as Array<Record<string, string>>
+  const a = audit
+  const sec = a?.security || {}
+  const net = a?.network || {}
+  const ports = (a?.listenPorts || []) as any[]
+  const findings = (a?.findings || []) as any[]
 
   return (
     <div className="flex-1 flex flex-col border border-slate-800 rounded-xl bg-slate-900/20 overflow-hidden">
-      <div className="shrink-0 px-4 py-2.5 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
-        <span className="text-sm">🛡</span>
-        <span className="text-xs font-medium text-slate-300">VPS 防禦 + 安全稽查</span>
+      <div className="shrink-0 px-3 py-2 border-b border-slate-800 bg-slate-900/40 flex items-center gap-2">
+        <span className="text-[9px] font-medium text-slate-300">VPS \u5b89\u5168\u7a3d\u67e5</span>
         <div className="flex-1" />
-        <button onClick={runAudit} disabled={loading}
-          className="text-[9px] px-2 py-0.5 border border-slate-700 rounded text-slate-500 hover:text-cyan-400 transition-all disabled:opacity-30"
-        >{loading ? '⏳ 掃描中...' : '🔄 重新稽查'}</button>
+        <button onClick={run} disabled={loading} className="text-[7px] px-2 py-0.5 border border-slate-700 rounded text-slate-600 hover:text-cyan-400 disabled:opacity-30">
+          {loading ? '\u6383\u63cf\u4e2d...' : '\ud83d\udd04 \u91cd\u65b0\u7a3d\u67e5'}
+        </button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {!a ? (
-          <div className="text-center py-12 text-[10px] text-slate-600">{loading ? '稽查中...' : '點擊「重新稽查」開始'}</div>
+          <div className="text-center py-6 text-[8px] text-slate-600">{loading ? '\u7a3d\u67e5\u4e2d...' : '\u8f09\u5165\u4e2d...'}</div>
         ) : (
           <>
-            {/* Score */}
-            <div className="flex items-center gap-4 px-4 py-3 rounded-xl border border-slate-800 bg-slate-900/40">
-              <div className={`text-2xl font-mono font-bold ${(a.score as number) >= 80 ? 'text-emerald-400' : (a.score as number) >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>{a.score as number}/100</div>
+            <div className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40">
+              <div className={`text-xl font-mono font-bold ${a.score >= 80 ? 'text-emerald-400' : a.score >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>{a.score}/100</div>
               <div>
-                <div className="text-xs text-slate-300">{a.verdict as string}</div>
-                <div className="text-[9px] text-slate-600">{a.hostname as string} · {a.os as string}</div>
+                <div className="text-[9px] text-slate-300">{a.verdict}</div>
+                <div className="text-[7px] text-slate-600">{a.hostname}\u00b7{a.os}</div>
               </div>
             </div>
-            {/* Security */}
             <div className="grid grid-cols-3 gap-2">
-              <StatMini label="UFW 防火牆" value={sec.firewallEnabled ? '✅ ON' : '❌ OFF'} color={sec.firewallEnabled ? 'text-emerald-400' : 'text-red-400'} />
-              <StatMini label="隱身模式" value={sec.stealthEnabled ? '✅ ON' : '❌ OFF'} color={sec.stealthEnabled ? 'text-emerald-400' : 'text-orange-400'} />
-              <StatMini label="Fail2Ban" value={sec.fail2banActive ? `✅ ${sec.fail2banJails}獄` : '❌ OFF'} color={sec.fail2banActive ? 'text-emerald-400' : 'text-red-400'} />
+              <Stat label="UFW" val={sec.firewallEnabled ? 'ON' : 'OFF'} c={sec.firewallEnabled ? 'text-emerald-400' : 'text-red-400'} />
+              <Stat label="\u96b1\u8eab" val={sec.stealthEnabled ? 'ON' : 'OFF'} c={sec.stealthEnabled ? 'text-emerald-400' : 'text-orange-400'} />
+              <Stat label="F2B" val={sec.fail2banActive ? `ON(${sec.fail2banJails})` : 'OFF'} c={sec.fail2banActive ? 'text-emerald-400' : 'text-red-400'} />
             </div>
-            {/* Network */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-3 py-2 text-[10px] font-mono space-y-0.5">
-              <div className="flex gap-8"><span className="text-slate-600 w-16">IP</span><span className="text-slate-300">{net.ip as string}</span></div>
-              <div className="flex gap-8"><span className="text-slate-600 w-16">閘道</span><span className="text-slate-300">{net.gateway as string}</span></div>
-              <div className="flex gap-8"><span className="text-slate-600 w-16">監聽端口</span><span className="text-orange-400">{ports.length} 個</span></div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-2 text-[8px] font-mono space-y-0.5">
+              <div className="flex gap-4"><span className="text-slate-600 w-12">IP</span><span className="text-slate-300">{net.ip}</span></div>
+              <div className="flex gap-4"><span className="text-slate-600 w-12">\u9598\u9053</span><span className="text-slate-300">{net.gateway}</span></div>
+              <div className="flex gap-4"><span className="text-slate-600 w-12">\u7aef\u53e3</span><span className="text-orange-400">{ports.length}\u500b(\u516c\u958b:{ports.filter((p: any) => p.public).length})</span></div>
             </div>
-            {/* Findings */}
             {findings.length > 0 && (
-              <div className="space-y-1.5">
-                <div className="text-[10px] text-slate-500 font-medium">發現項目 ({findings.length})</div>
-                {findings.map((f, i) => (
-                  <div key={i} className={`rounded-lg border px-3 py-2 text-[10px] ${f.level === 'CRITICAL' ? 'border-red-800 bg-red-950/40 text-red-400' : f.level === 'HIGH' ? 'border-orange-800 bg-orange-950/30 text-orange-400' : 'border-slate-700 bg-slate-900/30 text-slate-400'}`}>
-                    <span className="font-medium">[{f.level}] {f.title}</span>
-                    <div className="text-[9px] opacity-70 mt-0.5">{f.detail}</div>
+              <div className="space-y-1">
+                <div className="text-[8px] text-slate-500 font-medium">\u767c\u73fe ({findings.length})</div>
+                {findings.map((f: any, i: number) => (
+                  <div key={i} className={`rounded-lg border px-2 py-1.5 text-[8px] ${f.level === 'CRITICAL' ? 'border-red-800 bg-red-950/40 text-red-400' : f.level === 'HIGH' ? 'border-orange-800 bg-orange-950/30 text-orange-400' : 'border-slate-700 bg-slate-900/30 text-slate-400'}`}>
+                    [{f.level}] {f.title}
+                    <div className="text-[7px] opacity-70 mt-0.5">{f.detail}</div>
                   </div>
                 ))}
               </div>
