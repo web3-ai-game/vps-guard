@@ -66,56 +66,65 @@ const server = http.createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
 const TOOL_COMMANDS = {
-  arp_scan: {
-    label: 'ARP Scan',
-    cmd: 'sudo',
-    args: ['-n', 'arp-scan', '--localnet', '--interface=en0'],
-    requiresSudo: true,
+  fw_status: {
+    label: '防火牆狀態',
+    cmd: 'ufw',
+    args: ['status', 'verbose'],
   },
-  firewall_status: {
-    label: 'Firewall Status',
-    cmd: '/usr/libexec/ApplicationFirewall/socketfilterfw',
-    args: ['--getglobalstate'],
+  fw_rules: {
+    label: '防火牆規則',
+    cmd: 'ufw',
+    args: ['status', 'numbered'],
+  },
+  stealth_mode: {
+    label: '開啟隱身模式',
+    cmd: 'bash',
+    args: ['-c', 'iptables -C INPUT -p icmp --icmp-type echo-request -j DROP 2>/dev/null && echo "✅ 隱身模式已啟用 — ICMP DROP 規則存在" || (iptables -A INPUT -p icmp --icmp-type echo-request -j DROP && echo "✅ 隱身模式已啟用 — 已新增 ICMP DROP 規則")'],
   },
   open_ports: {
-    label: 'Open Ports (LAN exposed)',
-    cmd: 'lsof',
-    args: ['-iTCP', '-sTCP:LISTEN', '-nP'],
+    label: '開放端口探測',
+    cmd: 'ss',
+    args: ['-tlnp'],
   },
   self_scan: {
-    label: 'Self Port Scan',
+    label: '自我端口掃描',
     cmd: 'nmap',
     args: ['-Pn', '--top-ports', '30', '127.0.0.1'],
   },
-  stealth_mode: {
-    label: 'Toggle Stealth Mode ON',
-    cmd: 'sudo',
-    args: [
-      '-n',
-      '/usr/libexec/ApplicationFirewall/socketfilterfw',
-      '--setstealthmode',
-      'on',
-    ],
-  },
-  fw_enable: {
-    label: 'Enable Firewall',
-    cmd: 'sudo',
-    args: [
-      '-n',
-      '/usr/libexec/ApplicationFirewall/socketfilterfw',
-      '--setglobalstate',
-      'on',
-    ],
+  connections: {
+    label: '活躍連線',
+    cmd: 'ss',
+    args: ['-tnp'],
   },
   net_info: {
-    label: 'Network Info',
-    cmd: 'ifconfig',
-    args: ['en0'],
+    label: '網路配置',
+    cmd: 'ip',
+    args: ['addr', 'show'],
   },
   route_table: {
-    label: 'Routing Table',
-    cmd: 'netstat',
-    args: ['-rn'],
+    label: '路由表',
+    cmd: 'ip',
+    args: ['route', 'show'],
+  },
+  neighbors: {
+    label: '網路鄰居',
+    cmd: 'ip',
+    args: ['neigh', 'show'],
+  },
+  fail2ban: {
+    label: 'Fail2Ban 狀態',
+    cmd: 'fail2ban-client',
+    args: ['status'],
+  },
+  sys_resources: {
+    label: '系統資源',
+    cmd: 'bash',
+    args: ['-c', 'echo "=== CPU ==="; top -bn1 | head -5; echo ""; echo "=== 記憶體 ==="; free -h; echo ""; echo "=== 磁磟 ==="; df -h /; echo ""; echo "=== 運行時間 ==="; uptime'],
+  },
+  recent_logins: {
+    label: '最近登入',
+    cmd: 'last',
+    args: ['-n', '20', '-a'],
   },
 }
 
@@ -401,7 +410,7 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'run_custom' && msg.cmd) {
-      const allowed = ['nmap', 'arp-scan', 'netstat', 'ifconfig', 'lsof', 'ping', 'arp']
+      const allowed = ['nmap', 'ss', 'ip', 'lsof', 'ping', 'ufw', 'iptables', 'netstat', 'free', 'df', 'top', 'uptime', 'last', 'fail2ban-client', 'systemctl', 'journalctl', 'arp', 'cat', 'grep', 'wc', 'head', 'tail']
       const parts = msg.cmd.trim().split(/\s+/)
       const bin = parts[0].replace(/.*\//, '')
       if (!allowed.includes(bin)) {
@@ -430,129 +439,140 @@ function runCmd(cmd, args, timeoutMs = 8000) {
 }
 
 app.get('/api/audit', async (_req, res) => {
-  const FW = '/usr/libexec/ApplicationFirewall/socketfilterfw'
-
   const [
-    hostnameR, swversR, ifconfigR, netInfoR, spWifiR, dnsR, netstatRoutesR,
-    fwR, stealthR, lsofR, netstatR, arpR, arpScanR,
+    hostnameR, osReleaseR, ipAddrR, ipRouteR, dnsR,
+    ufwR, iptablesIcmpR, ssListenR, ssEstabR, arpR,
+    fail2banR, uptimeR, freeR,
   ] = await Promise.all([
     runCmd('hostname', []),
-    runCmd('sw_vers', []),
-    runCmd('ifconfig', ['en0']),
-    runCmd('networksetup', ['-getinfo', 'Wi-Fi']),
-    runCmd('system_profiler', ['SPAirPortDataType'], 10000),
-    runCmd('scutil', ['--dns']),
-    runCmd('netstat', ['-rn']),
-    runCmd(FW, ['--getglobalstate']),
-    runCmd(FW, ['--getstealthmode']),
-    runCmd('lsof', ['-iTCP', '-sTCP:LISTEN', '-nP']),
-    runCmd('netstat', ['-anp', 'tcp']),
-    runCmd('arp', ['-a']),
-    runCmd('sudo', ['-n', 'arp-scan', '--localnet', '--interface=en0'], 12000),
+    runCmd('cat', ['/etc/os-release']),
+    runCmd('ip', ['-4', 'addr', 'show']),
+    runCmd('ip', ['route', 'show']),
+    runCmd('cat', ['/etc/resolv.conf']),
+    runCmd('ufw', ['status', 'verbose']),
+    runCmd('iptables', ['-C', 'INPUT', '-p', 'icmp', '--icmp-type', 'echo-request', '-j', 'DROP']),
+    runCmd('ss', ['-tlnp']),
+    runCmd('ss', ['-tnp']),
+    runCmd('ip', ['neigh', 'show']),
+    runCmd('fail2ban-client', ['status']),
+    runCmd('uptime', ['-p']),
+    runCmd('free', ['-h']),
   ])
 
-  const parseKV = (text) => {
-    const out = {}
-    for (const line of text.split('\n')) {
-      const m = line.match(/^\s*([^:]+):\s*(.+)$/)
-      if (m) out[m[1].trim()] = m[2].trim()
-    }
-    return out
+  // Parse OS
+  const osKV = {}
+  for (const line of osReleaseR.stdout.split('\n')) {
+    const m = line.match(/^(\w+)=["']?([^"'\n]+)/)
+    if (m) osKV[m[1]] = m[2]
   }
 
-  const netInfo = parseKV(netInfoR.stdout)
+  // Parse network interfaces
+  const interfaces = []
+  const ifBlocks = ipAddrR.stdout.split(/^\d+: /m).filter(Boolean)
+  let primaryIp = 'unknown', primaryMac = 'unknown', primaryIface = 'eth0'
+  for (const block of ifBlocks) {
+    const name = (block.match(/^(\S+):/) || [])[1] || ''
+    if (name === 'lo') continue
+    const ip = (block.match(/inet (\d+\.\d+\.\d+\.\d+)\/(\d+)/) || [])
+    const mac = (block.match(/link\/ether ([0-9a-f:]{17})/) || [])[1] || ''
+    if (ip[1] && primaryIp === 'unknown') { primaryIp = ip[1]; primaryMac = mac; primaryIface = name }
+    if (ip[1]) interfaces.push({ name, ip: ip[1], prefix: ip[2], mac })
+  }
 
-  const ip4 = netInfo['IP address'] || (ifconfigR.stdout.match(/inet (\d+\.\d+\.\d+\.\d+)/) || [])[1] || 'unknown'
-  const mask = netInfo['Subnet mask'] || (ifconfigR.stdout.match(/netmask (\S+)/) || [])[1] || ''
-  const macAddr = (ifconfigR.stdout.match(/ether ([0-9a-f:]{17})/) || [])[1] || 'unknown'
+  // Gateway
+  const gateway = (ipRouteR.stdout.match(/default via (\S+)/) || [])[1] || 'unknown'
 
-  const gatewayFromNetInfo = netInfo['Router'] || ''
-  const gatewayFromRoute = (netstatRoutesR.stdout.split('\n').find(l => /^default\s+\d/.test(l.trim()) && l.includes('en0')) || '').trim().split(/\s+/)[1] || ''
-  const gateway = gatewayFromNetInfo || gatewayFromRoute || 'unknown'
-
+  // DNS
   const dnsServers = [...new Set(
-    [...dnsR.stdout.matchAll(/nameserver\[.*?\] : (\S+)/g)].map(m => m[1])
+    [...dnsR.stdout.matchAll(/^nameserver\s+(\S+)/gm)].map(m => m[1])
   )]
 
-  const spWifi = spWifiR.stdout
-  const security = (spWifi.match(/Security:\s*(.+)/) || [])[1]?.trim() || 'unknown'
-  const channel = (spWifi.match(/Channel:\s*(.+)/) || [])[1]?.trim() || 'N/A'
-  const signal = (spWifi.match(/Signal \/ Noise:\s*(-\d+)/) || [])[1] || 'N/A'
-  const phyMode = (spWifi.match(/PHY Mode:\s*(\S+)/) || [])[1] || 'N/A'
-  const countryCode = (spWifi.match(/Country Code:\s*(\S+)/) || [])[1] || ''
-  const ssid = '<redacted by macOS>'
-  const bssid = '<redacted by macOS>'
-  const authMode = security
+  // Firewall (UFW)
+  const ufwOut = ufwR.stdout.toLowerCase()
+  const firewallEnabled = ufwOut.includes('status: active')
+  const ufwDefault = (ufwR.stdout.match(/Default:\s*(.+)/i) || [])[1]?.trim() || ''
 
+  // Stealth (ICMP DROP)
+  const stealthEnabled = iptablesIcmpR.ok
+
+  // Listen ports
   const listenPorts = []
-  for (const line of lsofR.stdout.split('\n').slice(1)) {
+  for (const line of ssListenR.stdout.split('\n').slice(1)) {
     const parts = line.trim().split(/\s+/)
-    if (parts.length < 9) continue
-    const addr = parts[8] || ''
-    const port = (addr.match(/:(\d+)$/) || [])[1]
-    const proc = parts[0]
-    if (port && !listenPorts.find(p => p.port === port))
-      listenPorts.push({ port, process: proc, addr })
+    if (parts.length < 5) continue
+    const addr = parts[3] || ''
+    const portMatch = addr.match(/:(\d+)$/)
+    if (!portMatch) continue
+    const port = portMatch[1]
+    const procInfo = parts.slice(5).join(' ')
+    const procName = (procInfo.match(/\("([^"]+)"/) || [])[1] || procInfo || 'unknown'
+    const isPublic = addr.startsWith('0.0.0.0:') || addr.startsWith('*:') || addr.startsWith('[::]:')
+    if (!listenPorts.find(p => p.port === port))
+      listenPorts.push({ port, process: procName, addr, public: isPublic })
   }
 
-  const established = netstatR.stdout.split('\n')
-    .filter(l => l.includes('ESTABLISHED'))
-    .map(l => l.trim().split(/\s+/))
-    .filter(p => p.length >= 5)
-    .map(p => ({ local: p[3], remote: p[4] }))
-    .slice(0, 25)
-
-  const arpDevices = []
-  const arpRe = /\((\d+\.\d+\.\d+\.\d+)\) at ([0-9a-f:]+|\(incomplete\))/gi
-  let m
-  while ((m = arpRe.exec(arpR.stdout)) !== null)
-    arpDevices.push({ ip: m[1], mac: m[2] })
-
-  const arpScanDevices = []
-  if (arpScanR.ok) {
-    const re = /^(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f:]{17})\s+(.*)/gim
-    let sm
-    while ((sm = re.exec(arpScanR.stdout)) !== null)
-      arpScanDevices.push({ ip: sm[1], mac: sm[2], vendor: sm[3].trim() })
+  // Established connections
+  const established = []
+  for (const line of ssEstabR.stdout.split('\n').slice(1)) {
+    if (!line.includes('ESTAB')) continue
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 5) continue
+    established.push({ local: parts[3], remote: parts[4], process: (parts.slice(5).join(' ').match(/\("([^"]+)"/) || [])[1] || '' })
   }
 
-  const devices = arpScanDevices.length > 0 ? arpScanDevices
-    : arpDevices.map(d => ({ ...d, vendor: '' }))
+  // ARP neighbors
+  const devices = []
+  for (const line of arpR.stdout.split('\n')) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length >= 4 && parts[0].match(/\d+\.\d+\.\d+\.\d+/)) {
+      devices.push({ ip: parts[0], mac: parts[4] || '', state: parts[parts.length - 1] || '', vendor: '' })
+    }
+  }
 
-  const osInfo = parseKV(swversR.stdout)
+  // Fail2Ban
+  const fail2banActive = fail2banR.ok
+  const jailCount = (fail2banR.stdout.match(/Number of jail:\s*(\d+)/) || [])[1] || '0'
 
-  const firewallEnabled = fwR.stdout.toLowerCase().includes('enabled')
-  const stealthEnabled = stealthR.stdout.toLowerCase().includes('enabled')
-
+  // Findings
   const findings = []
 
-  if (!firewallEnabled) findings.push({ level: 'CRITICAL', code: 'FW_DISABLED', title: '防火牆未啟用', detail: '主機防火牆處於關閉狀態，局域網其他設備可直接嘗試連入本機所有端口。', fix: '執行 Enable Firewall 工具或系統偏好設定 → 安全性 → 防火牆' })
-  if (!stealthEnabled) findings.push({ level: 'HIGH', code: 'STEALTH_OFF', title: '隱身模式未啟用', detail: 'ICMP ping 和 closed port 探測有回應，使本機在 LAN 上可被主動偵測到。', fix: '執行 Toggle Stealth Mode ON 工具' })
-  if (listenPorts.length > 0) findings.push({ level: 'HIGH', code: 'OPEN_PORTS', title: `本機有 ${listenPorts.length} 個 TCP 監聽端口`, detail: `監聽端口暴露於局域網：${listenPorts.map(p => p.port + '/' + p.process).join(', ')}`, fix: '停用不需要的服務，或以防火牆規則封鎖對外暴露' })
-  if (devices.length > 5) findings.push({ level: 'HIGH', code: 'MANY_PEERS', title: `LAN 存在 ${devices.length} 台設備`, detail: '公共 WiFi 環境中大量陌生設備共享同一廣播域，MITM / ARP 欺騙風險顯著上升。', fix: '啟用防火牆隱身模式，考慮使用 VPN 隧道所有流量' })
-  if (['open', 'none', ''].includes(authMode.toLowerCase())) findings.push({ level: 'CRITICAL', code: 'OPEN_WIFI', title: 'WiFi 無加密 (Open Network)', detail: '該 AP 未使用任何加密，所有封包以明文傳輸，任何人可嗅探。', fix: '立即斷線，只使用 WPA2/WPA3 網路，並強制全程走 VPN' })
-  else if (authMode.toLowerCase().includes('wpa2')) findings.push({ level: 'MEDIUM', code: 'WPA2_PUBLIC', title: 'WPA2 公共網路 — 預設不可信', detail: 'WPA2-PSK 中共享密鑰對所有用戶相同，任何知道密碼的人皆可解密同網段流量。', fix: '使用 VPN（WireGuard/Tailscale）封裝所有出站流量' })
-  if (dnsServers.some(d => !d.startsWith('192.168') && !d.startsWith('10.') && !d.startsWith('172.'))) findings.push({ level: 'MEDIUM', code: 'DNS_EXTERNAL', title: 'DNS 解析走公共或未知服務器', detail: `檢測到 DNS: ${dnsServers.join(', ')}。公共 WiFi 下 DNS 可能被劫持或污染。`, fix: '使用 DoH/DoT（1.1.1.1#cloudflare-dns.com）或 VPN 自帶 DNS' })
-  if (established.length > 15) findings.push({ level: 'MEDIUM', code: 'MANY_CONNECTIONS', title: `${established.length} 條出站 TCP 連線`, detail: '活躍連線數量較多，建議確認每條連線的目標 IP 是否合法。', fix: '使用 lsof -i 按進程審查每條連線' })
+  if (!firewallEnabled) findings.push({ level: 'CRITICAL', code: 'FW_DISABLED', title: 'UFW 防火牆未啟用', detail: '伺服器防火牆未啟用，所有端口直接暴露於公網。', fix: '執行「防火牆狀態」工具查看，或 SSH 執行 ufw enable' })
+  else findings.push({ level: 'INFO', code: 'FW_ACTIVE', title: 'UFW 防火牆已啟用', detail: `預設策略: ${ufwDefault}`, fix: '無需操作' })
 
-  findings.push({ level: 'INFO', code: 'ZERO_TRUST_BASELINE', title: '零信任基線：公共 WiFi 預設不可信', detail: '不論加密強度如何，共享網路環境下任何 LAN 對等方均應視為潛在威脅。所有敏感流量必須端對端加密。', fix: '部署 VPN（Tailscale 推薦）確保即使 LAN 被監聽，流量仍安全' })
+  if (!stealthEnabled) findings.push({ level: 'HIGH', code: 'STEALTH_OFF', title: '隱身模式未啟用', detail: '伺服器回應 ICMP ping，可被外部探測發現。', fix: '執行「開啟隱身模式」工具新增 iptables ICMP DROP 規則' })
+  else findings.push({ level: 'INFO', code: 'STEALTH_ON', title: '隱身模式已啟用', detail: 'ICMP echo-request 已被 DROP', fix: '無需操作' })
+
+  const publicPorts = listenPorts.filter(p => p.public)
+  if (publicPorts.length > 3) findings.push({ level: 'HIGH', code: 'MANY_PUBLIC_PORTS', title: `${publicPorts.length} 個端口對外開放`, detail: `公網監聽端口: ${publicPorts.map(p => p.port + '/' + p.process).join(', ')}`, fix: '使用 ufw deny 封鎖不需要的端口' })
+  else if (publicPorts.length > 0) findings.push({ level: 'MEDIUM', code: 'PUBLIC_PORTS', title: `${publicPorts.length} 個端口對外開放`, detail: `公網端口: ${publicPorts.map(p => p.port + '/' + p.process).join(', ')}`, fix: '確認每個端口都是必要的' })
+
+  if (!fail2banActive) findings.push({ level: 'HIGH', code: 'NO_FAIL2BAN', title: 'Fail2Ban 未運行', detail: '沒有暴力破解防護，SSH 等服務可被無限嘗試。', fix: '安裝並啟用 fail2ban: apt install fail2ban && systemctl enable fail2ban' })
+  else findings.push({ level: 'INFO', code: 'FAIL2BAN_OK', title: `Fail2Ban 運行中 (${jailCount} 個監獄)`, detail: '暴力破解防護已啟用', fix: '無需操作' })
+
+  if (established.length > 30) findings.push({ level: 'MEDIUM', code: 'MANY_CONNECTIONS', title: `${established.length} 條活躍連線`, detail: '連線數量較多，建議審查是否有異常連線。', fix: '使用「活躍連線」工具逐條檢查' })
+
+  if (dnsServers.length === 0) findings.push({ level: 'MEDIUM', code: 'NO_DNS', title: 'DNS 未配置', detail: '未偵測到 DNS 伺服器配置', fix: '檢查 /etc/resolv.conf' })
+
+  findings.push({ level: 'INFO', code: 'ZERO_TRUST', title: '零信任基線：VPS 預設公網暴露', detail: '雲端 VPS 直接暴露於公網，所有入站流量必須經過防火牆過濾，敏感服務只綁定 127.0.0.1。', fix: '確保 UFW 啟用、SSH 只允許金鑰登入、非必要服務綁定 localhost' })
 
   const critCount = findings.filter(f => f.level === 'CRITICAL').length
   const highCount = findings.filter(f => f.level === 'HIGH').length
-  const score = Math.max(0, 100 - critCount * 30 - highCount * 15 - findings.filter(f => f.level === 'MEDIUM').length * 5)
+  const medCount = findings.filter(f => f.level === 'MEDIUM').length
+  const score = Math.max(0, 100 - critCount * 30 - highCount * 15 - medCount * 5)
   const verdict = score < 40 ? 'CRITICAL' : score < 60 ? 'HIGH RISK' : score < 80 ? 'MODERATE' : 'ACCEPTABLE'
 
   res.json({
     generatedAt: new Date().toISOString(),
     hostname: hostnameR.stdout.trim(),
-    os: `${osInfo['ProductName'] || ''} ${osInfo['ProductVersion'] || ''}`.trim(),
-    network: { ip: ip4, mask, mac: macAddr, gateway, dns: dnsServers },
-    wifi: { ssid, bssid, signal, channel, authMode, phyMode },
-    security: { firewallEnabled, stealthEnabled },
+    os: osKV['PRETTY_NAME'] || `${osKV['NAME'] || 'Linux'} ${osKV['VERSION_ID'] || ''}`,
+    network: { ip: primaryIp, iface: primaryIface, mac: primaryMac, gateway, dns: dnsServers, interfaces },
+    wifi: null,
+    security: { firewallEnabled, stealthEnabled, ufwDefault, fail2banActive, fail2banJails: parseInt(jailCount) },
     listenPorts,
-    established,
+    established: established.slice(0, 50),
     devices,
-    arpScanAvailable: arpScanR.ok,
+    uptime: uptimeR.stdout.trim(),
+    memory: freeR.stdout.trim(),
     findings,
     score,
     verdict,

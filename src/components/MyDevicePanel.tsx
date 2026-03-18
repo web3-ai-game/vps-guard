@@ -21,17 +21,21 @@ interface Props {
 }
 
 const TOOLS = [
-  { id: 'firewall_status', icon: '🛡', label: '防火牆狀態', desc: '查看防火牆是否啟用', color: 'emerald' },
-  { id: 'fw_enable',       icon: '🔒', label: '啟用防火牆', desc: '立即啟用 macOS 防火牆', color: 'emerald' },
-  { id: 'stealth_mode',    icon: '👁', label: '開啟隱身模式', desc: '讓設備不響應 ping/探測', color: 'purple' },
-  { id: 'open_ports',      icon: '🔍', label: '監聽端口掃描', desc: '查看本機對外開放端口', color: 'amber' },
-  { id: 'arp_scan',        icon: '📡', label: 'ARP 局域網掃描', desc: '探測 LAN 全部設備', color: 'cyan' },
-  { id: 'self_scan',       icon: '🖥', label: '自我端口掃描', desc: 'nmap 掃描本機 top 30', color: 'indigo' },
-  { id: 'net_info',        icon: '🌐', label: '網路配置', desc: 'IP / 接口 / 網段', color: 'sky' },
-  { id: 'route_table',     icon: '🗺', label: '路由表', desc: '查看出站路由', color: 'orange' },
+  { id: 'fw_status',      icon: '🛡', label: '防火牆狀態',     desc: 'UFW 防火牆詳細狀態',     color: 'emerald' },
+  { id: 'fw_rules',       icon: '�', label: '防火牆規則',     desc: 'UFW 規則編號列表',       color: 'emerald' },
+  { id: 'stealth_mode',   icon: '👁', label: '開啟隱身模式',   desc: 'iptables 阻擋 ICMP 探測', color: 'purple' },
+  { id: 'open_ports',     icon: '🔍', label: '開放端口探測',   desc: 'ss -tlnp 監聽端口',      color: 'amber' },
+  { id: 'self_scan',      icon: '�', label: '自我端口掃描',   desc: 'nmap 掃描 top 30 端口',  color: 'indigo' },
+  { id: 'connections',    icon: '�', label: '活躍連線',       desc: 'ss -tnp 所有 TCP 連線',  color: 'red' },
+  { id: 'net_info',       icon: '🌐', label: '網路配置',       desc: 'IP / 接口 / MAC',        color: 'sky' },
+  { id: 'route_table',    icon: '🗺', label: '路由表',         desc: '出站路由規則',            color: 'orange' },
+  { id: 'neighbors',      icon: '📡', label: '網路鄰居',       desc: 'ARP 鄰居探測',           color: 'cyan' },
+  { id: 'fail2ban',       icon: '🚫', label: 'Fail2Ban 狀態', desc: '暴力破解防護狀態',        color: 'rose' },
+  { id: 'sys_resources',  icon: '📊', label: '系統資源',       desc: 'CPU / 記憶體 / 磁碟',    color: 'teal' },
+  { id: 'recent_logins',  icon: '👤', label: '最近登入',       desc: '最近 20 筆登入記錄',     color: 'violet' },
 ]
 
-const ONE_CLICK_SUITE = ['fw_enable', 'stealth_mode']
+const ONE_CLICK_SUITE = ['fw_status', 'stealth_mode', 'open_ports']
 
 const COLOR_MAP: Record<string, string> = {
   emerald: 'border-emerald-800/50 hover:border-emerald-600 hover:bg-emerald-950/40',
@@ -41,6 +45,10 @@ const COLOR_MAP: Record<string, string> = {
   indigo:  'border-indigo-800/50 hover:border-indigo-600 hover:bg-indigo-950/40',
   sky:     'border-sky-800/50 hover:border-sky-600 hover:bg-sky-950/40',
   orange:  'border-orange-800/50 hover:border-orange-600 hover:bg-orange-950/40',
+  red:     'border-red-800/50 hover:border-red-600 hover:bg-red-950/40',
+  rose:    'border-rose-800/50 hover:border-rose-600 hover:bg-rose-950/40',
+  teal:    'border-teal-800/50 hover:border-teal-600 hover:bg-teal-950/40',
+  violet:  'border-violet-800/50 hover:border-violet-600 hover:bg-violet-950/40',
 }
 
 function StatCard({ label, value, ok, icon }: { label: string; value: string; ok?: boolean; icon: string }) {
@@ -85,7 +93,7 @@ export default function MyDevicePanel({ connected, running, lines, activeLabel, 
           className="w-full py-3 rounded-xl text-sm font-mono border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-600 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           <span className="text-lg">🛡</span>
-          一鍵全防護（啟用防火牆 + 開啟隱身模式）
+          一鍵安全檢查（防火牆 + 隱身 + 端口掃描）
         </button>
       </div>
 

@@ -84,12 +84,16 @@ export default function App() {
             const buf = runBufRef.current
             if (buf) {
               const outLines = buf.lines.filter(l => l.type === 'stdout').map(l => l.text)
-              if (buf.tool === 'firewall_status') setFirewallEnabled(outLines.join(' ').toLowerCase().includes('enabled'))
-              if (buf.tool === 'fw_enable') setFirewallEnabled(msg.code === 0)
-              if (buf.tool === 'stealth_mode') setStealthEnabled(msg.code === 0)
-              if (buf.tool === 'open_ports') setListenPortCount(outLines.filter(l => l.trim()).length)
-              if (buf.tool === 'arp_scan') {
-                const count = outLines.filter(l => /^\d+\.\d+\.\d+\.\d+\s+[0-9a-f:]{17}/i.test(l)).length
+              const allOut = outLines.join('\n').toLowerCase()
+              if (buf.tool === 'fw_status' || buf.tool === 'fw_rules') setFirewallEnabled(allOut.includes('status: active'))
+              if (buf.tool === 'stealth_mode') setStealthEnabled(msg.code === 0 || allOut.includes('已啟用'))
+              if (buf.tool === 'open_ports') setListenPortCount(outLines.filter(l => l.includes('LISTEN') || l.includes('users:')).length)
+              if (buf.tool === 'neighbors') {
+                const count = outLines.filter(l => /\d+\.\d+\.\d+\.\d+/.test(l)).length
+                setLanDeviceCount(count)
+              }
+              if (buf.tool === 'connections') {
+                const count = outLines.filter(l => l.includes('ESTAB')).length
                 if (count > 0) setLanDeviceCount(count)
               }
             }
