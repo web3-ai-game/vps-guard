@@ -33,10 +33,10 @@ const BOTS = {
   win: {
     name: 'SD',
     role: 'ops',
-    desc: '🪟 Win 端靜默操作 — 只回應指令，不主動播報',
+    desc: '🔇 Win 靜默代理 — 永不發群消息，只透過面板 API 交互',
     token: null,
     bot: null,
-    triggers: ['/sd', '/winstatus', '/winops'],
+    triggers: [],  // no group triggers — panel only
   },
 }
 
@@ -44,18 +44,44 @@ let chatId = null
 let messageLog = []
 const MAX_LOG = 200
 
-// Anti-spam: bot 內部交互不發群，只記錄到 vault
-const SPAM_COOLDOWN = 3000 // ms between same bot messages
+// ════ Anti-spam + Rate Limiting ════
+const SPAM_COOLDOWN = 30000 // 30s cooldown for same message
+const BOT_RATE_LIMITS = {
+  chou:   { minInterval: 600000, lastSent: 0 },  // 10 min between broadcasts
+  onion:  { minInterval: 60000,  lastSent: 0 },  // 1 min between messages
+  xiaoai: { minInterval: 20000,  lastSent: 0, perMinute: 3, minuteCount: 0, minuteReset: 0 }, // max 3/min
+  win:    { minInterval: Infinity, lastSent: 0 }, // NEVER sends to group
+}
 const lastBotMsg = {}
+
 function shouldSendToGroup(botKey, text) {
   const now = Date.now()
-  const key = botKey + ':' + (text || '').slice(0, 50)
-  if (lastBotMsg[key] && now - lastBotMsg[key] < SPAM_COOLDOWN) return false
-  lastBotMsg[key] = now
-  // 內部心跳/自動播報靜默（只記不發）
+  // SD (win) NEVER sends to group — all interaction via panel API
+  if (botKey === 'win') return false
+  // Internal/heartbeat tags — archive only
   if (text && (text.includes('[INTERNAL]') || text.includes('[HEARTBEAT]'))) return false
+  // Same message cooldown (30s)
+  const dedupKey = botKey + ':' + (text || '').slice(0, 50)
+  if (lastBotMsg[dedupKey] && now - lastBotMsg[dedupKey] < SPAM_COOLDOWN) return false
+  lastBotMsg[dedupKey] = now
+  // Per-bot rate limit
+  const limit = BOT_RATE_LIMITS[botKey]
+  if (limit) {
+    if (now - limit.lastSent < limit.minInterval) return false
+    // Per-minute cap for xiaoai
+    if (limit.perMinute) {
+      if (now - limit.minuteReset > 60000) { limit.minuteCount = 0; limit.minuteReset = now }
+      if (limit.minuteCount >= limit.perMinute) return false
+      limit.minuteCount++
+    }
+    limit.lastSent = now
+  }
   return true
 }
+
+// Bot panel chat queue — for panel-based interaction
+const botChatQueue = []
+const MAX_CHAT_QUEUE = 100
 
 // Win Bot 交互狀態
 let updateTeammateCallback = null
@@ -232,48 +258,19 @@ async function handleGroupMessage(botKey, msg) {
     }
   }
 
-  // ── Win Bot 訊息自動偵測 (所有 bot 都監聽，但只有 xiaoai 回應) ──
-    // ═══ [WIN] SD Bot — 靜默操作，只回應指令 ═══
+  // ═══ [WIN] SD — 完全靜默代理，永不發群消息 ═══
+  // SD 只歸檔消息，所有交互通過面板 /api/bot/* 端點
   if (botKey === 'win') {
-    // SD only responds to direct commands, never broadcasts
-    if (lower === '/sd' || lower === '/winstatus') {
-      try {
-        const http = require('http')
-        const resp = await new Promise((resolve, reject) => {
-          const req = http.get('http://127.0.0.1:3001/api/teammates', (res) => {
-            let data = ''; res.on('data', chunk => data += chunk)
-            res.on('end', () => resolve(JSON.parse(data)))
-          })
-          req.on('error', reject)
-          req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')) })
-        })
-        const wd = resp.win?.data || {}
-        const online = resp.win?.online || false
-        await sendAsBot('win', [
-          '[SD] Win Status',
-          (online ? 'Online' : 'Offline'),
-          'FW: ' + (wd.firewall ? 'ON' : 'OFF'),
-          'Def: ' + (wd.defender ? 'ON' : 'OFF'),
-          'Host: ' + (wd.hostname || '?'),
-          'Ports: ' + (wd.openPorts || '?'),
-          'Conns: ' + (wd.connections || '?'),
-        ].join(' | '), null)
-      } catch (e) {
-        await sendAsBot('win', '[SD] Error: ' + e.message, null)
-      }
-      return
-    }
-    if (lower === '/winops') {
-      await sendAsBot('win', [
-        '[SD] Commands:',
-        '/sd — Win status (one-line)',
-        '/winstatus — same',
-        '/winops — this help',
-      ].join('\n'), null)
-      return
-    }
-    // SD ignores all other messages — no spam
-    return
+    // Archive to chat queue for panel retrieval
+    botChatQueue.push({
+      id: Date.now(),
+      from: user,
+      text,
+      ts: new Date().toISOString(),
+      direction: 'in',
+    })
+    if (botChatQueue.length > MAX_CHAT_QUEUE) botChatQueue.splice(0, botChatQueue.length - MAX_CHAT_QUEUE)
+    return // NEVER respond in group
   }
 
   if (botKey === 'xiaoai') {
@@ -521,7 +518,11 @@ async function handleGroupMessage(botKey, msg) {
         '  /sync — 請求 Win Bot 回報',
         '  /wincheck — 查看 Win Bot 狀態',
         '',
-        '📝 日誌系統：',
+        '� SD (Win Bot) — 面板操作：',
+        '  SD 永不發群消息，請用面板 🔧運維 操作',
+        '  面板: http://167.71.13.130:3001 PIN:684861',
+        '',
+        '�📝 日誌系統：',
         '  /logs — 加密日誌狀態',
         '  /daily — 產生今日摘要',
         '  /exchange — 匯出交換數據',
@@ -689,4 +690,83 @@ function getBotInfo() {
   }))
 }
 
-module.exports = { startExperts, stopExperts, isRunning, getBotInfo, sendAsBot, getLog, getChatId, formatMD, BOTS, getWinBotState }
+// ═══ Panel Bot Chat API ═══
+function getBotChatQueue() {
+  return botChatQueue.slice(-50)
+}
+
+async function panelBotChat(message, fromUser) {
+  const entry = {
+    id: Date.now(),
+    from: fromUser || 'panel',
+    text: message,
+    ts: new Date().toISOString(),
+    direction: 'in',
+  }
+  botChatQueue.push(entry)
+
+  // Process command via SD internally
+  let response = null
+  const lower = (message || '').toLowerCase().trim()
+
+  if (lower === '/sd' || lower === '/winstatus') {
+    try {
+      const http = require('http')
+      const resp = await new Promise((resolve, reject) => {
+        const req = http.get('http://127.0.0.1:3001/api/teammates', (res) => {
+          let data = ''; res.on('data', chunk => data += chunk)
+          res.on('end', () => resolve(JSON.parse(data)))
+        })
+        req.on('error', reject)
+        req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')) })
+      })
+      const wd = resp.win?.data || {}
+      response = `[SD] Win: ${resp.win?.online ? 'Online' : 'Offline'} | FW:${wd.firewall ? 'ON' : 'OFF'} | Def:${wd.defender ? 'ON' : 'OFF'} | Host:${wd.hostname || '?'} | Ports:${wd.openPorts || '?'} | Conns:${wd.connections || '?'}`
+    } catch (e) {
+      response = `[SD] Error: ${e.message}`
+    }
+  } else if (lower === '/help' || lower === '/winops') {
+    response = '[SD] Panel Commands:\n/sd — Win status\n/winstatus — same\n/forward <msg> — Forward to group via 小愛\n/ops — Run ops command\n/help — this help'
+  } else if (lower.startsWith('/forward ')) {
+    const forwardText = message.slice(9).trim()
+    if (forwardText) {
+      try {
+        await sendAsBot('xiaoai', `📡 [Win→群] ${forwardText}`, null)
+        response = '[SD] Forwarded to group via 小愛'
+      } catch (e) {
+        response = `[SD] Forward failed: ${e.message}`
+      }
+    } else {
+      response = '[SD] Usage: /forward <message>'
+    }
+  } else {
+    response = '[SD] Unknown command. Type /help for available commands.'
+  }
+
+  // Push response to queue
+  if (response) {
+    const respEntry = {
+      id: Date.now() + 1,
+      from: 'SD',
+      text: response,
+      ts: new Date().toISOString(),
+      direction: 'out',
+    }
+    botChatQueue.push(respEntry)
+    if (botChatQueue.length > MAX_CHAT_QUEUE) botChatQueue.splice(0, botChatQueue.length - MAX_CHAT_QUEUE)
+  }
+
+  return response
+}
+
+async function forwardToGroup(text, fromBot) {
+  if (!text) return null
+  const prefix = fromBot === 'win' ? '📡 [Win→群]' : '📡 [轉發]'
+  return sendAsBot('xiaoai', `${prefix} ${text}`, null)
+}
+
+module.exports = {
+  startExperts, stopExperts, isRunning, getBotInfo,
+  sendAsBot, getLog, getChatId, formatMD, BOTS, getWinBotState,
+  getBotChatQueue, panelBotChat, forwardToGroup,
+}

@@ -698,6 +698,32 @@ app.get('/api/watcher/cache/:key', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ════════════════════════════════════════
+// BOT CHAT — 面板 Bot 交互 API (SD 靜默代理)
+// ════════════════════════════════════════
+app.get('/api/bot/chat', (_req, res) => {
+  try { res.json({ messages: experts.getBotChatQueue() }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/bot/chat', async (req, res) => {
+  const { message, user } = req.body
+  if (!message) return res.status(400).json({ error: 'message required' })
+  try {
+    const response = await experts.panelBotChat(message, user || 'panel')
+    res.json({ ok: true, response })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/bot/forward', async (req, res) => {
+  const { text, from } = req.body
+  if (!text) return res.status(400).json({ error: 'text required' })
+  try {
+    await experts.forwardToGroup(text, from || 'win')
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 app.get('*', (_req, res) => {
   const index = path.join(__dirname, '..', 'dist', 'index.html')
   if (require('fs').existsSync(index)) res.sendFile(index)
