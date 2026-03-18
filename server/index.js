@@ -969,6 +969,16 @@ app.get('/api/defender/report', (_req, res) => {
   res.json({ report: defender.generateBattleReport() })
 })
 
+app.post('/api/defender/broadcast', (_req, res) => {
+  const report = defender.generateBattleReport()
+  if (experts.isRunning()) {
+    experts.sendAsBot('xiaoai', report, null).catch(() => {})
+    res.json({ ok: true, msg: '小愛已播報戰績' })
+  } else {
+    res.json({ ok: false, msg: 'Experts not running' })
+  }
+})
+
 app.get('*', (_req, res) => {
   const index = path.join(__dirname, '..', 'dist', 'index.html')
   if (require('fs').existsSync(index)) res.sendFile(index)
