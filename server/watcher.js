@@ -123,14 +123,16 @@ function updateSyncStatus(platform, data) {
 
 function cacheContent(key, content) {
   ensureCacheDir()
-  saveEncrypted(`cache/${key}.enc`, {
+  const safeKey = path.basename(key)
+  saveEncrypted(`cache/${safeKey}.enc`, {
     content,
     cachedAt: new Date().toISOString(),
   })
 }
 
 function getCachedContent(key) {
-  const data = loadEncrypted(`cache/${key}.enc`)
+  const safeKey = path.basename(key)
+  const data = loadEncrypted(`cache/${safeKey}.enc`)
   return data?.content || null
 }
 

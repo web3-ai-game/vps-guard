@@ -19,7 +19,11 @@ const watcher = require('./watcher')
 const monitor = require('./monitor')
 const defender = require('./defender')
 
-const PIN = process.env.PIN_CODE || '684861'
+if (!process.env.PIN_CODE) {
+  console.error('FATAL ERROR: PIN_CODE environment variable is required.')
+  process.exit(1)
+}
+const PIN = process.env.PIN_CODE
 const pinTokens = new Set()
 
 const teammates = {
@@ -387,6 +391,11 @@ wss.on('connection', (ws) => {
     try {
       msg = JSON.parse(raw.toString())
     } catch {
+      return
+    }
+
+    if (!msg.token || !pinTokens.has(msg.token)) {
+      ws.send(JSON.stringify({ type: 'error', text: 'Unauthorized: Invalid PIN token' }))
       return
     }
 
@@ -990,7 +999,7 @@ app.post('/api/defender/broadcast-custom', (req, res) => {
   }
 })
 
-app.get('*', (_req, res) => {
+app.get(/(.*)/, (_req, res) => {
   const index = path.join(__dirname, '..', 'dist', 'index.html')
   if (require('fs').existsSync(index)) res.sendFile(index)
   else res.status(404).json({ error: 'Frontend not built. Run: npx vite build' })

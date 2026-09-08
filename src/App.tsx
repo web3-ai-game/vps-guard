@@ -115,7 +115,8 @@ export default function App() {
 
   const runTool = useCallback((id: string) => {
     if (!connected || running) return
-    wsRef.current?.send(JSON.stringify({ type: 'run', tool: id }))
+    const token = sessionStorage.getItem('bt-pin-token')
+    wsRef.current?.send(JSON.stringify({ type: 'run', tool: id, token }))
   }, [connected, running])
 
   const clearTerminal = useCallback(() => {
