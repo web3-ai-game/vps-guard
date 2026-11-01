@@ -1,4 +1,4 @@
-const TelegramBot = require('node-telegram-bot-api')
+const { createBot } = require('./telegram-client')
 const { analyzeSecurityData } = require('./ai')
 const logger = require('./logger')
 const personality = require('./personality')
@@ -640,8 +640,9 @@ function startExperts(tokens, groupChatId, onUpdateTeammate) {
     if (!token) continue
     BOTS[key].token = token
     try {
-      const b = new TelegramBot(token, { polling: true })
+      const b = createBot(token)
       BOTS[key].bot = b
+      b.start()
       console.log(`[Experts] ${BOTS[key].name} started (${key})`)
 
       b.on('message', (msg) => {

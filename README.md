@@ -32,7 +32,7 @@ npm run dev
 
 - 不上傳日誌或 IP 到第三方地理服務。GeoIP 用本機庫。
 - 不含代理或繞過封鎖功能。
-- 倉庫不放真實 token、PIN、聊天紀錄或主機位址。
+- 倉庫不放真實 token、PIN、聊天紀錄或主機位址。Telegram 呼叫使用內建 `fetch`，不依賴已停更的 `request`。
 
 <a id="en"></a>
 
@@ -64,7 +64,7 @@ npm run dev
 
 - No upload of logs or IPs to a third-party geo service. GeoIP is local.
 - No proxy or circumvention features.
-- The tree does not contain live tokens, PINs, chat logs, or host addresses.
+- The tree does not contain live tokens, PINs, chat logs, or host addresses. Telegram calls use the built-in `fetch` client, so the abandoned `request` package is not a dependency.
 
 ## License
 

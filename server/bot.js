@@ -1,4 +1,4 @@
-const TelegramBot = require('node-telegram-bot-api')
+const { createBot } = require('./telegram-client')
 
 let bot = null
 const messageHistory = []
@@ -22,7 +22,8 @@ function startBot(token, chatId) {
   if (!token) return false
 
   try {
-    bot = new TelegramBot(token, { polling: { interval: 2000, params: { timeout: 10 } } })
+    bot = createBot(token)
+    bot.start()
 
     bot.on('message', (msg) => {
       const text = msg.text || ''
