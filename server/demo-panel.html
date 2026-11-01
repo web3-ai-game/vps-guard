@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VPS Guard · DO SGP1 demo</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; background: #0b1220; color: #e2e8f0; }
+    main { max-width: 920px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    p { color: #94a3b8; }
+    code { color: #f8fafc; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1e293b; font-variant-numeric: tabular-nums; }
+    th { color: #94a3b8; font-weight: 600; }
+    .tag { display: inline-block; border: 1px solid #334155; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+    form { display: flex; gap: 8px; margin: 16px 0; }
+    input, button { border: 1px solid #334155; background: #111827; color: inherit; border-radius: 8px; padding: 8px 10px; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>VPS Guard <span class="tag">demo</span></h1>
+    <p>Host label <strong>DO SGP1</strong> · DigitalOcean · Singapore. Addresses are RFC 5737 documentation ranges. This page does not read <code>auth.log</code> and does not call Telegram.</p>
+    <p>Sample gate PIN is <code>000000</code>. It only unlocks this local demo.</p>
+    <form id="gate">
+      <input id="pin" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off" />
+      <button type="submit">Unlock</button>
+    </form>
+    <p id="status">Waiting for the sample stream.</p>
+    <table>
+      <thead><tr><th>Time</th><th>Host</th><th>Kind</th><th>Address</th><th>User</th><th>Action</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+  <script>
+    const rows = document.getElementById('rows')
+    const status = document.getElementById('status')
+    document.getElementById('gate').addEventListener('submit', async (event) => {
+      event.preventDefault()
+      const pin = document.getElementById('pin').value
+      const res = await fetch('/api/pin/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pin })
+      })
+      const body = await res.json()
+      status.textContent = body.ok ? 'Demo gate open. Sample events continue below.' : 'PIN rejected.'
+    })
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws')
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data)
+      if (msg.type !== 'demo-event') return
+      const row = msg.data
+      const tr = document.createElement('tr')
+      for (const value of [row.ts, row.host, row.kind, row.ip, row.user, row.action]) {
+        const td = document.createElement('td')
+        td.textContent = value
+        tr.appendChild(td)
+      }
+      rows.prepend(tr)
+      status.textContent = 'Live sample stream from DO SGP1.'
+    }
+  </script>
+</body>
+</html>
